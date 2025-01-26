@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 
 include(sese/cmake/MiniSeseTools.cmake)
+sese_auto_find_vcpkg()
 
 project(sese-http)
 set(CMAKE_CXX_STANDARD 20)
