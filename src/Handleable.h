@@ -5,7 +5,12 @@
 #include <sese/io/File.h>
 #include <sese/util/StopWatch.h>
 
-#include "ConnType.h"
+enum class ConnType {
+    FILTER,
+    FILE_DOWNLOAD,
+    CONTROLLER,
+    NONE
+};
 
 struct Handleable {
     using Ptr = std::shared_ptr<Handleable>;
