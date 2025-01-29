@@ -4,10 +4,10 @@
 
 asio::awaitable<void> HttpConnection::handle() {
     do {
-        char buffer[MTU_VALUE];
         // read header
         bool parse_status = false;
         while (!recv_status) {
+            char buffer[MTU_VALUE];
             auto readed = co_await asyncRead(buffer, MTU_VALUE);
             builder.write(buffer, readed);
             for (int i = 0; i < readed; ++i) {
@@ -31,6 +31,7 @@ asio::awaitable<void> HttpConnection::handle() {
         }
         builder.freeCapacity();
         while (expect_length > real_length) {
+            char buffer[MTU_VALUE];
             auto need = std::min(expect_length - real_length, MTU_VALUE);
             auto readed = co_await asyncRead(buffer, need);
             real_length += readed;
@@ -46,6 +47,7 @@ asio::awaitable<void> HttpConnection::handle() {
         } else {
             co_await writeBody();
         }
+        // todo keepalive
     } while (keepalive);
 }
 

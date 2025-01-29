@@ -21,7 +21,7 @@ asio::awaitable<size_t> HttpConnectionImpl::asyncRead(void *buffer, size_t size)
 asio::awaitable<size_t> HttpConnectionImpl::asyncWrite(const void *buffer, size_t size) {
     // co_return co_await this->socket.async_write_some(asio::buffer(buffer, size), asio::use_awaitable);
     auto block_size = size;
-    auto p = buffer;
+    auto p = static_cast<const char *>(buffer);
     while (block_size) {
         auto wrote = co_await this->socket.async_write_some(asio::buffer(p, block_size), asio::use_awaitable);
         p += wrote;
@@ -44,7 +44,7 @@ asio::awaitable<size_t> HttpsConnectionImpl::asyncRead(void *buffer, size_t size
 asio::awaitable<size_t> HttpsConnectionImpl::asyncWrite(const void *buffer, size_t size) {
     // co_return co_await this->stream.async_write_some(asio::buffer(buffer, size), asio::use_awaitable);
     auto block_size = size;
-    auto p = buffer;
+    auto p = static_cast<const char *>(buffer);
     while (block_size) {
         auto wrote = co_await this->stream.async_write_some(asio::buffer(buffer, size), asio::use_awaitable);
         p += wrote;
