@@ -5,10 +5,20 @@
 
 #include <sese/net/http/HttpServletContext.h>
 #include <sese/net/http/Range.h>
+#include <sese/net/http/Controller.h>
 #include <sese/io/File.h>
 #include <sese/io/ByteBuilder.h>
 #include <sese/util/StopWatch.h>
 #include <sese/service/Service.h>
+#include <sese/security/SSLContext.h>
+
+
+using SSLContextPtr = std::unique_ptr<sese::security::SSLContext>;
+using FilterCallback = std::function<bool(sese::net::http::Request &, sese::net::http::Response &)>;
+using ConnectionCallback = std::function<bool(sese::net::IPAddress::Ptr &)>;
+using FilterMap = std::unordered_map<std::string, FilterCallback>;
+using MountPointMap = std::unordered_map<std::string, std::string>;
+using ServletMap = std::unordered_map<std::string, sese::net::http::Servlet>;
 
 struct Handleable {
     enum class ConnType {
@@ -89,7 +99,9 @@ struct HttpsConnectionImpl final : HttpConnection {
 };
 
 struct HttpServiceImpl final {
-public:
+    void handleFilter(Handleable *handleable);
+
+    void handleRequest(Handleable *handleable);
 
 private:
     asio::io_context io_context;
@@ -99,6 +111,19 @@ private:
 
     static constexpr unsigned char ALPN_PROTOS[] = "\x2h2\x8http/1.1";
 
-    static int alpnCallback(SSL *ssl, const uint8_t **out, uint8_t *out_length, const uint8_t *in, uint32_t in_length,
-                            void *data);
+    static int alpnCallback(
+        SSL *ssl,
+        const uint8_t **out,
+        uint8_t *out_length,
+        const uint8_t *in,
+        uint32_t in_length,
+        void *data);
+
+    std::string serv_name;
+    size_t timeout;
+    // todo to ref
+    MountPointMap mount_points;
+    ServletMap servlets;
+    FilterMap filters;
+    FilterCallback tail_filter;
 };

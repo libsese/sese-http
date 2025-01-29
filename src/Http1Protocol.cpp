@@ -23,6 +23,7 @@ asio::awaitable<void> HttpConnection::handle() {
         if (!parse_status) {
             break;
         }
+        service->handleFilter(this);
         // read body
         auto expect_length = static_cast<size_t>(sese::toInteger(request.get("content-length", "0")));
         auto real_length = builder.getReadableSize();
@@ -37,7 +38,7 @@ asio::awaitable<void> HttpConnection::handle() {
             real_length += readed;
             request.getBody().write(buffer, readed);
         }
-        // todo handle
+        service->handleRequest(this);
         if (ranges.size() == 1) {
             // one range file
             co_await writeSingleRange();

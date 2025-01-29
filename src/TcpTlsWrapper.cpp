@@ -1,5 +1,27 @@
 #include "Http.h"
 
+int HttpServiceImpl::alpnCallback(
+    SSL *ssl,
+    const uint8_t **out,
+    uint8_t *out_length,
+    const uint8_t *in,
+    uint32_t in_length,
+    void *data) {
+    if (SSL_select_next_proto(
+            const_cast<unsigned char **>(out),
+            out_length,
+            ALPN_PROTOS,
+            sizeof(ALPN_PROTOS),
+            in,
+            in_length
+        ) != OPENSSL_NPN_NEGOTIATED) {
+        *out = nullptr;
+        *out_length = 0;
+        return SSL_TLSEXT_ERR_NOACK;
+    }
+    return SSL_TLSEXT_ERR_OK;
+}
+
 HttpConnection::HttpConnection(
     HttpServiceImpl *service,
     asio::io_context &io_context,
