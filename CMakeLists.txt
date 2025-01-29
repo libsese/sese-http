@@ -18,12 +18,9 @@ endif ()
 find_package(asio CONFIG REQUIRED)
 
 add_library(sese-http
-        src/HttpServiceImpl.h
-        src/HttpServiceImpl.cpp
-        src/HttpConnection.cpp
-        src/HttpConnectionImpl.cpp
-        src/HttpConnectionEx.cpp
-        src/HttpConnectionExImpl.cpp
+        src/Http.h
+        src/Http1Protocol.cpp
+        src/TcpTlsWrapper.cpp
 )
 target_link_libraries(sese-http PRIVATE asio::asio Core)
 
