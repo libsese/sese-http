@@ -27,7 +27,6 @@ struct Handleable {
     sese::io::File::Ptr file;
     size_t filesize = 0;
     std::vector<sese::net::http::Range> ranges;
-    std::vector<sese::net::http::Range>::iterator range_iterator = ranges.begin();
     sese::net::IPAddress::Ptr remote_address{};
     bool keepalive = false;
     size_t timeout = 5;
