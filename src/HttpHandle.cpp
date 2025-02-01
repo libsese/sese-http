@@ -5,6 +5,8 @@
 
 #include <filesystem>
 
+#include "sese/internal/net/AsioIPConvert.h"
+
 void HttpServiceImpl::handleFilter(Handleable *handleable) {
     auto &&req = handleable->request;
     auto &&resp = handleable->response;
@@ -116,12 +118,12 @@ void HttpServiceImpl::handleRequest(Handleable *handleable) {
                     goto uni_handle;
                 }
                 content_length += 12 +
-                                  strlen(HTTPD_BOUNDARY) +
-                                  strlen("Content-Type: ") +
-                                  handleable->content_type.length() +
-                                  strlen("Content-Range: ") +
-                                  item.toStringLength(handleable->filesize) +
-                                  item.len;
+                        strlen(HTTPD_BOUNDARY) +
+                        strlen("Content-Type: ") +
+                        handleable->content_type.length() +
+                        strlen("Content-Range: ") +
+                        item.toStringLength(handleable->filesize) +
+                        item.len;
             }
             content_length += 6 + strlen(HTTPD_BOUNDARY);
             // content-type
@@ -133,7 +135,8 @@ void HttpServiceImpl::handleRequest(Handleable *handleable) {
 
         auto last_modified = last_write_time(filename);
         uint64_t time = sese::to_time_t(last_modified) * 1000 * 1000;
-        resp.set("last-modified", sese::text::DateTimeFormatter::format(sese::DateTime(time, 0), TIME_GREENWICH_MEAN_PATTERN));
+        resp.set("last-modified",
+                 sese::text::DateTimeFormatter::format(sese::DateTime(time, 0), TIME_GREENWICH_MEAN_PATTERN));
     }
 
 uni_handle:
@@ -149,11 +152,62 @@ uni_handle:
     resp.set("server", this->serv_name);
     resp.set("accept-range", "bytes");
     if (tail_filter && (resp.getCode() != 200 && resp.getCode() != 201)) {
-        if(tail_filter(req, resp)) {
+        if (tail_filter(req, resp)) {
             resp.set("content-length", std::to_string(resp.getBody().getReadableSize()));
             handleable->conn_type = Handleable::ConnType::CONTROLLER;
         }
     }
-    SESE_INFO("{} {} {} in {}ms", sese::net::http::requestTypeToString(req.getType()), req.getUri(), resp.getCode(), handleable->stopwatch.stop().getTotalMilliseconds());
+    SESE_INFO("{} {} {} in {}ms", sese::net::http::requestTypeToString(req.getType()), req.getUri(), resp.getCode(),
+              handleable->stopwatch.stop().getTotalMilliseconds());
 }
 
+asio::awaitable<void> HttpServiceImpl::handleAccept() {
+    while (is_running) {
+        asio::ip::tcp::socket socket(io_context);
+        co_await acceptor.async_accept(socket, asio::use_awaitable);
+        co_spawn(io_context, [this, &socket]()-> asio::awaitable<void> {
+            auto remote_address = sese::internal::net::convert(socket.remote_endpoint());
+            if (connection_callback && !connection_callback(remote_address)) {
+                co_return;
+            }
+            HttpConnectionImpl connection(this, io_context, remote_address, timeout, std::move(socket));
+            co_await connection.handle();
+        }, asio::detached);
+    }
+}
+
+asio::awaitable<void> HttpServiceImpl::handleSslAccept() {
+    while (is_running) {
+        asio::ip::tcp::socket socket(io_context);
+        co_await acceptor.async_accept(socket, asio::use_awaitable);
+        auto stream = asio::ssl::stream<asio::ip::tcp::socket>(std::move(socket), this->ssl_context.value());
+
+        // ALPN
+        const uint8_t *data = nullptr;
+        uint32_t data_length;
+        SSL_get0_alpn_selected(stream.native_handle(), &data, &data_length);
+        auto proto = std::string_view(reinterpret_cast<const char *>(data), data_length);
+        if (proto == "http/1.1") {
+            co_spawn(io_context, [this, &stream]()-> asio::awaitable<void> {
+                auto remote_address = sese::internal::net::convert(stream.lowest_layer().remote_endpoint());
+                if (connection_callback && !connection_callback(remote_address)) {
+                    co_return;
+                }
+                HttpsConnectionImpl connection(this, io_context, remote_address, timeout, std::move(stream));
+                co_await connection.handle();
+            }, asio::detached);
+        } else if (proto == "h2") {
+            // todo h2 implementation
+        } else {
+            // No protocol, switch to http/1.1
+            co_spawn(io_context, [this, &stream]()-> asio::awaitable<void> {
+                auto remote_address = sese::internal::net::convert(stream.lowest_layer().remote_endpoint());
+                if (connection_callback && !connection_callback(remote_address)) {
+                    co_return;
+                }
+                HttpsConnectionImpl connection(this, io_context, remote_address, timeout, std::move(stream));
+                co_await connection.handle();
+            }, asio::detached);
+        }
+    }
+}

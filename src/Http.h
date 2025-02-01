@@ -119,10 +119,14 @@ struct HttpServiceImpl final {
 
     void handleRequest(Handleable *handleable);
 
+    asio::awaitable<void> handleAccept();
+
+    asio::awaitable<void> handleSslAccept();
+
 private:
     asio::io_context io_context;
     std::optional<asio::ssl::context> ssl_context;
-    // asio::ip::tcp::acceptor acceptor;
+    asio::ip::tcp::acceptor acceptor;
     asio::error_code error;
 
     static constexpr unsigned char ALPN_PROTOS[] = "\x2h2\x8http/1.1";
@@ -133,11 +137,14 @@ private:
         uint8_t *out_length,
         const uint8_t *in,
         uint32_t in_length,
-        void *data);
+        void *data
+    );
 
+    std::atomic_bool is_running = false;
     std::string serv_name;
     size_t timeout;
     // todo to ref
+    ConnectionCallback connection_callback;
     MountPointMap mount_points;
     ServletMap servlets;
     FilterMap filters;
