@@ -5,10 +5,16 @@
 asio::awaitable<void> HttpConnection::handle() {
     do {
         // read header
+        bool first = true;
         bool parse_status = false;
         while (!recv_status) {
             char buffer[MTU_VALUE];
             auto readed = co_await asyncRead(buffer, MTU_VALUE);
+            if (first) {
+                timer.cancel();
+            } else {
+                first = false;
+            }
             builder.write(buffer, readed);
             for (int i = 0; i < readed; ++i) {
                 if (is0x0a && buffer[i] == '\r') {
@@ -48,7 +54,9 @@ asio::awaitable<void> HttpConnection::handle() {
         } else {
             co_await writeBody();
         }
-        // todo keepalive
+        if (keepalive) {
+            setTimeout();
+        }
     } while (keepalive);
 }
 
@@ -91,8 +99,8 @@ asio::awaitable<void> HttpConnection::writeRanges() {
         if (i == 0) {
             // The first range
             subheader = std::string("--") + HTTPD_BOUNDARY + "\r\n" +
-                             "content-type: " + content_type + "\r\n" +
-                             "content-range: " + range.toString(filesize) + "\r\n\r\n";
+                        "content-type: " + content_type + "\r\n" +
+                        "content-range: " + range.toString(filesize) + "\r\n\r\n";
             co_await asyncWrite(subheader.data(), subheader.length());
         } else if (i == ranges.size() - 1) {
             // The last range
@@ -100,8 +108,8 @@ asio::awaitable<void> HttpConnection::writeRanges() {
         } else {
             // The ranges in between
             subheader = std::string("\r\n--") + HTTPD_BOUNDARY + "\r\n" +
-                                         "content-type: " + content_type + "\r\n" +
-                                         "content-range: " + range.toString(filesize) + "\r\n\r\n";
+                        "content-type: " + content_type + "\r\n" +
+                        "content-range: " + range.toString(filesize) + "\r\n\r\n";
             co_await asyncWrite(subheader.data(), subheader.length());
         }
         if (file->setSeek(static_cast<int64_t>(ranges[0].begin), sese::io::Seek::BEGIN)) {

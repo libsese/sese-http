@@ -46,16 +46,24 @@ struct Handleable {
 struct HttpServiceImpl;
 
 struct HttpConnection : Handleable {
-    HttpConnection(HttpServiceImpl *service, asio::io_context &io_context, const sese::net::IPAddress::Ptr &addr);
+    HttpConnection(
+        HttpServiceImpl *service,
+        asio::io_context &io_context,
+        const sese::net::IPAddress::Ptr &addr,
+        size_t timeout
+    );
 
     virtual asio::awaitable<size_t> asyncRead(void *buffer, size_t size) = 0;
 
     virtual asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) = 0;
 
+    virtual void setTimeout() = 0;
+
     HttpServiceImpl *service;
     bool is0x0a = false;
     bool recv_status = false;
     sese::io::ByteBuilder builder;
+    asio::steady_timer timer;
 
     asio::awaitable<void> handle();
 
@@ -69,15 +77,19 @@ struct HttpConnection : Handleable {
 struct HttpConnectionImpl final : HttpConnection {
     using Socket = asio::ip::tcp::socket;
 
-    HttpConnectionImpl(HttpServiceImpl *service,
-                       asio::io_context &io_context,
-                       const sese::net::IPAddress::Ptr &addr,
-                       Socket socket
+    HttpConnectionImpl(
+        HttpServiceImpl *service,
+        asio::io_context &io_context,
+        const sese::net::IPAddress::Ptr &addr,
+        size_t timeout,
+        Socket socket
     );
 
     asio::awaitable<size_t> asyncRead(void *buffer, size_t size) override;
 
     asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) override;
+
+    void setTimeout() override;
 
     Socket socket;
 };
@@ -85,15 +97,19 @@ struct HttpConnectionImpl final : HttpConnection {
 struct HttpsConnectionImpl final : HttpConnection {
     using Stream = asio::ssl::stream<asio::ip::tcp::socket>;
 
-    HttpsConnectionImpl(HttpServiceImpl *service,
-                        asio::io_context &io_context,
-                        const sese::net::IPAddress::Ptr &addr,
-                        Stream stream
+    HttpsConnectionImpl(
+        HttpServiceImpl *service,
+        asio::io_context &io_context,
+        const sese::net::IPAddress::Ptr &addr,
+        size_t timeout,
+        Stream stream
     );
 
     asio::awaitable<size_t> asyncRead(void *buffer, size_t size) override;
 
     asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) override;
+
+    void setTimeout() override;
 
     Stream stream;
 };

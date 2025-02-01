@@ -25,15 +25,17 @@ int HttpServiceImpl::alpnCallback(
 HttpConnection::HttpConnection(
     HttpServiceImpl *service,
     asio::io_context &io_context,
-    const sese::net::IPAddress::Ptr &addr)
-    : service(service) {
+    const sese::net::IPAddress::Ptr &addr,
+    size_t timeout)
+    : service(service), timer(io_context, asio::chrono::seconds{timeout}) {
 }
 
 HttpConnectionImpl::HttpConnectionImpl(
     HttpServiceImpl *service,
     asio::io_context &io_context,
     const sese::net::IPAddress::Ptr &addr,
-    Socket socket) : HttpConnection(service, io_context, addr), socket(std::move(socket)) {
+    size_t timeout,
+    Socket socket) : HttpConnection(service, io_context, addr, timeout), socket(std::move(socket)) {
 }
 
 asio::awaitable<size_t> HttpConnectionImpl::asyncRead(void *buffer, size_t size) {
@@ -52,11 +54,23 @@ asio::awaitable<size_t> HttpConnectionImpl::asyncWrite(const void *buffer, size_
     co_return size;
 }
 
+void HttpConnectionImpl::setTimeout() {
+    timer.async_wait([&](const asio::error_code &code) {
+        if (code == asio::error::operation_aborted) {
+            // cancel
+        } else {
+            // timeout
+            socket.cancel();
+        }
+    });
+}
+
 HttpsConnectionImpl::HttpsConnectionImpl(
     HttpServiceImpl *service,
     asio::io_context &io_context,
     const sese::net::IPAddress::Ptr &addr,
-    Stream stream) : HttpConnection(service, io_context, addr), stream(std::move(stream)) {
+    size_t timeout,
+    Stream stream) : HttpConnection(service, io_context, addr, timeout), stream(std::move(stream)) {
 }
 
 asio::awaitable<size_t> HttpsConnectionImpl::asyncRead(void *buffer, size_t size) {
@@ -73,4 +87,15 @@ asio::awaitable<size_t> HttpsConnectionImpl::asyncWrite(const void *buffer, size
         block_size -= wrote;
     }
     co_return size;
+}
+
+void HttpsConnectionImpl::setTimeout() {
+    timer.async_wait([&](const asio::error_code &code) {
+        if (code == asio::error::operation_aborted) {
+            // cancel
+        } else {
+            // timeout
+            stream.lowest_layer().cancel();
+        }
+    });
 }
