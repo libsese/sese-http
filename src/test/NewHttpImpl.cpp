@@ -1,4 +1,4 @@
-#include "../HttpServiceImpl.h"
+#include "../Http.h"
 
 #include <sese/Init.h>
 #include <sese/Log.h>
@@ -11,25 +11,26 @@ int main(int argc, char **argv) {
     auto ssl = sese::security::SSLContextBuilder::UniqueSSL4Server();
     ssl->importCertFile(PROJECT_PATH "/sese/sese/test/Data/test-ca.crt");
     ssl->importPrivateKeyFile(PROJECT_PATH "/sese/sese/test/Data/test-key.pem");
-    HttpServiceImpl::MountPointMap mountPoints{{"/", "C:/Users/kaoru/Desktop/html/"}};
-    HttpServiceImpl::ServletMap servlets;
-    HttpServiceImpl::FilterCallback tailFilter;
-    HttpServiceImpl::FilterMap filters;
-    HttpServiceImpl::ConnectionCallback connectionCallback;
+    MountPointMap mountPoints{{"/", "C:/Users/kaoru/Desktop/html/"}};
+    ServletMap servlets;
+    FilterCallback tailFilter;
+    FilterMap filters;
+    ConnectionCallback connectionCallback;
     std::string name = "Hello";
     auto impl = std::make_shared<HttpServiceImpl>(
         any,
         std::move(ssl),
-        30,
         name,
+        30,
+        2,
+        connectionCallback,
         mountPoints,
         servlets,
-        tailFilter,
         filters,
-        connectionCallback
+        tailFilter
         );
     if (!impl->startup()) {
-        SESE_ERROR("exit with {}", impl->getLastError());
+        // SESE_ERROR("exit with {}", impl->getLastError());
         return 0;
     } else {
         while (true) {

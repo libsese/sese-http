@@ -11,6 +11,7 @@
 #include <sese/util/StopWatch.h>
 #include <sese/service/Service.h>
 #include <sese/security/SSLContext.h>
+#include <sese/thread/Thread.h>
 
 
 using SSLContextPtr = std::unique_ptr<sese::security::SSLContext>;
@@ -115,6 +116,23 @@ struct HttpsConnectionImpl final : HttpConnection {
 };
 
 struct HttpServiceImpl final {
+    HttpServiceImpl(
+        const sese::net::IPAddress::Ptr &address,
+        SSLContextPtr ssl_context,
+        std::string serv_name,
+        size_t timeout,
+        size_t io_threads,
+        ConnectionCallback &connection_callback,
+        MountPointMap &mount_points,
+        ServletMap &servlets,
+        FilterMap &filters,
+        FilterCallback &tail_filter
+    );
+
+    bool startup();
+
+    void shutdown();
+
     void handleFilter(Handleable *handleable);
 
     void handleRequest(Handleable *handleable);
@@ -125,9 +143,9 @@ struct HttpServiceImpl final {
 
 private:
     asio::io_context io_context;
+    asio::ip::tcp::endpoint endpoint;
     std::optional<asio::ssl::context> ssl_context;
     asio::ip::tcp::acceptor acceptor;
-    asio::error_code error;
 
     static constexpr unsigned char ALPN_PROTOS[] = "\x2h2\x8http/1.1";
 
@@ -140,13 +158,13 @@ private:
         void *data
     );
 
-    std::atomic_bool is_running = false;
+    sese::net::IPAddress::Ptr address;
     std::string serv_name;
     size_t timeout;
-    // todo to ref
-    ConnectionCallback connection_callback;
-    MountPointMap mount_points;
-    ServletMap servlets;
-    FilterMap filters;
-    FilterCallback tail_filter;
+    std::vector<sese::Thread> threads;
+    ConnectionCallback &connection_callback;
+    MountPointMap &mount_points;
+    ServletMap &servlets;
+    FilterMap &filters;
+    FilterCallback &tail_filter;
 };

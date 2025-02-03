@@ -2,10 +2,52 @@
 #include "sese/Util.h"
 #include "sese/Log.h"
 #include "sese/net/http/HttpUtil.h"
+#include "sese/internal/net/AsioIPConvert.h"
+#include "sese/internal/net/AsioSSLContextConvert.h"
 
 #include <filesystem>
 
-#include "sese/internal/net/AsioIPConvert.h"
+HttpServiceImpl::HttpServiceImpl(
+    const sese::net::IPAddress::Ptr &address,
+    SSLContextPtr ssl_context,
+    std::string serv_name,
+    size_t timeout,
+    size_t io_threads,
+    ConnectionCallback &connection_callback,
+    MountPointMap &mount_points,
+    ServletMap &servlets,
+    FilterMap &filters,
+    FilterCallback &tail_filter
+) : acceptor(io_context),
+    address(address),
+    serv_name(std::move(serv_name)),
+    timeout(timeout),
+    connection_callback(connection_callback),
+    mount_points(mount_points),
+    servlets(servlets),
+    filters(filters),
+    tail_filter(tail_filter) {
+    // io_threads = std::max<size_t>(io_threads, 1);
+    threads.reserve(1 + io_threads);
+    threads.emplace_back([this] {
+        co_spawn(io_context, [this]()-> asio::awaitable<void> {
+            if (this->ssl_context.has_value()) {
+                co_return co_await handleSslAccept();
+            }
+            co_return co_await handleAccept();
+        }, asio::detached);
+    }, "HttpServiceImpl0");
+    for (size_t i = 0; i < io_threads; ++i) {
+        threads.emplace_back([this] {
+            io_context.run();
+        }, "HttpServiceImpl" + std::to_string(i + 1));
+    }
+    auto addr = sese::internal::net::convert(address);
+    endpoint = asio::ip::tcp::endpoint(addr, address->getPort());
+    if (ssl_context) {
+        this->ssl_context = sese::internal::net::convert(std::move(ssl_context));
+    }
+}
 
 void HttpServiceImpl::handleFilter(Handleable *handleable) {
     auto &&req = handleable->request;
@@ -162,7 +204,7 @@ uni_handle:
 }
 
 asio::awaitable<void> HttpServiceImpl::handleAccept() {
-    while (is_running) {
+    while (true) {
         asio::ip::tcp::socket socket(io_context);
         co_await acceptor.async_accept(socket, asio::use_awaitable);
         co_spawn(io_context, [this, &socket]()-> asio::awaitable<void> {
@@ -177,7 +219,7 @@ asio::awaitable<void> HttpServiceImpl::handleAccept() {
 }
 
 asio::awaitable<void> HttpServiceImpl::handleSslAccept() {
-    while (is_running) {
+    while (true) {
         asio::ip::tcp::socket socket(io_context);
         co_await acceptor.async_accept(socket, asio::use_awaitable);
         auto stream = asio::ssl::stream<asio::ip::tcp::socket>(std::move(socket), this->ssl_context.value());
@@ -208,6 +250,53 @@ asio::awaitable<void> HttpServiceImpl::handleSslAccept() {
                 HttpsConnectionImpl connection(this, io_context, remote_address, timeout, std::move(stream));
                 co_await connection.handle();
             }, asio::detached);
+        }
+    }
+}
+
+bool HttpServiceImpl::startup() {
+    asio::error_code error;
+
+    if (ssl_context) {
+        auto ctx = ssl_context->native_handle();
+        // SSL_CTX_set_alpn_protos(ctx, alpn_protos, sizeof(alpn_protos));
+        SSL_CTX_set_alpn_select_cb(ctx, alpnCallback, nullptr);
+        SSL_CTX_set_mode(ctx, SSL_MODE_ENABLE_PARTIAL_WRITE);
+    }
+
+    error = acceptor.open(endpoint.protocol(), error);
+    if (error)
+        return false;
+
+    error = acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true), error);
+    if (error)
+        return false;
+
+    error = acceptor.bind(endpoint, error);
+    if (error)
+        return false;
+
+    error = acceptor.listen(asio::socket_base::max_listen_connections, error);
+    if (error)
+        return false;
+
+    for (auto &&th: threads) {
+        th.start();
+    }
+    return true;
+}
+
+void HttpServiceImpl::shutdown() {
+    post(acceptor.get_executor(), [this] {
+        asio::error_code error;
+        error = acceptor.close(error);
+    });
+    post(io_context.get_executor(), [this] {
+        io_context.stop();
+    });
+    for (auto &&th: threads) {
+        if (th.joinable()) {
+            th.join();
         }
     }
 }
