@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
     std::string name = "Hello";
     auto impl = std::make_shared<HttpServiceImpl>(
         any,
-        std::move(ssl),
+        nullptr,
         name,
         30,
         2,

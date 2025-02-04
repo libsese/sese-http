@@ -1,6 +1,7 @@
 #include "Http.h"
 
 #include <sese/net/http/HttpUtil.h>
+#include <sese/Log.h>
 
 asio::awaitable<void> HttpConnection::handle() {
     do {
@@ -11,6 +12,7 @@ asio::awaitable<void> HttpConnection::handle() {
             char buffer[MTU_VALUE];
             auto readed = co_await asyncRead(buffer, MTU_VALUE);
             if (first) {
+                SESE_INFO("cancel");
                 timer.cancel();
             } else {
                 first = false;
@@ -45,6 +47,9 @@ asio::awaitable<void> HttpConnection::handle() {
             request.getBody().write(buffer, readed);
         }
         service->handleRequest(this);
+        sese::net::http::HttpUtil::sendResponse(&builder, &response);
+        co_await writeHeader();
+        builder.freeCapacity();
         if (ranges.size() == 1) {
             // one range file
             co_await writeSingleRange();
@@ -55,9 +60,29 @@ asio::awaitable<void> HttpConnection::handle() {
             co_await writeBody();
         }
         if (keepalive) {
-            setTimeout();
+            // todo bug
+            SESE_INFO("set timeout");
+            timer.expires_after(asio::chrono::seconds(timeout));
+            timer.async_wait([&](const asio::error_code &code) {
+                SESE_INFO("timeouted");
+                this->onTimeout(code);
+            });
         }
     } while (keepalive);
+}
+
+asio::awaitable<void> HttpConnection::writeHeader() {
+    auto &&header = builder;
+    auto expect_length = header.getReadableSize();
+    size_t real_length = 0;
+    while (expect_length != real_length) {
+        char buffer[MTU_VALUE];
+        auto need = std::min(expect_length - real_length, MTU_VALUE);
+        header.peek(buffer, need);
+        auto wrote = co_await asyncWrite(buffer, need);
+        header.trunc(wrote);
+        real_length += wrote;
+    }
 }
 
 asio::awaitable<void> HttpConnection::writeBody() {
@@ -95,24 +120,20 @@ asio::awaitable<void> HttpConnection::writeRanges() {
         auto &&range = ranges[i];
         size_t expect_length = range.len;
         size_t real_length = 0;
-        std::string subheader;
         if (i == 0) {
             // The first range
-            subheader = std::string("--") + HTTPD_BOUNDARY + "\r\n" +
-                        "content-type: " + content_type + "\r\n" +
-                        "content-range: " + range.toString(filesize) + "\r\n\r\n";
+            auto subheader = std::string("--") + HTTPD_BOUNDARY + "\r\n" +
+                             "content-type: " + content_type + "\r\n" +
+                             "content-range: " + range.toString(filesize) + "\r\n\r\n";
             co_await asyncWrite(subheader.data(), subheader.length());
-        } else if (i == ranges.size() - 1) {
-            // The last range
-            subheader = std::string("\r\n--") + HTTPD_BOUNDARY + "--\r\n";
         } else {
             // The ranges in between
-            subheader = std::string("\r\n--") + HTTPD_BOUNDARY + "\r\n" +
-                        "content-type: " + content_type + "\r\n" +
-                        "content-range: " + range.toString(filesize) + "\r\n\r\n";
+            auto subheader = std::string("\r\n--") + HTTPD_BOUNDARY + "\r\n" +
+                             "content-type: " + content_type + "\r\n" +
+                             "content-range: " + range.toString(filesize) + "\r\n\r\n";
             co_await asyncWrite(subheader.data(), subheader.length());
         }
-        if (file->setSeek(static_cast<int64_t>(ranges[0].begin), sese::io::Seek::BEGIN)) {
+        if (file->setSeek(static_cast<int64_t>(range.begin), sese::io::Seek::BEGIN)) {
             throw "Failed to call File::setSeek()";
         }
         while (expect_length != real_length) {
@@ -123,7 +144,9 @@ asio::awaitable<void> HttpConnection::writeRanges() {
             assert(wrote == need);
             real_length += wrote;
         }
-        if (1 == ranges.size() - 1) {
+        if (i == ranges.size() - 1) {
+            // The last range
+            auto subheader = std::string("\r\n--") + HTTPD_BOUNDARY + "--\r\n";
             co_await asyncWrite(subheader.data(), subheader.length());
         }
     }

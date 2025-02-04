@@ -27,25 +27,19 @@ HttpServiceImpl::HttpServiceImpl(
     servlets(servlets),
     filters(filters),
     tail_filter(tail_filter) {
-    // io_threads = std::max<size_t>(io_threads, 1);
-    threads.reserve(1 + io_threads);
-    threads.emplace_back([this] {
-        co_spawn(io_context, [this]()-> asio::awaitable<void> {
-            if (this->ssl_context.has_value()) {
-                co_return co_await handleSslAccept();
-            }
-            co_return co_await handleAccept();
-        }, asio::detached);
-    }, "HttpServiceImpl0");
+    threads.reserve(io_threads);
     for (size_t i = 0; i < io_threads; ++i) {
         threads.emplace_back([this] {
             io_context.run();
-        }, "HttpServiceImpl" + std::to_string(i + 1));
+        }, "HttpServiceImpl" + std::to_string(i));
     }
     auto addr = sese::internal::net::convert(address);
     endpoint = asio::ip::tcp::endpoint(addr, address->getPort());
     if (ssl_context) {
         this->ssl_context = sese::internal::net::convert(std::move(ssl_context));
+        auto ctx = this->ssl_context->native_handle();
+        SSL_CTX_set_alpn_select_cb(ctx, alpnCallback, nullptr);
+        SSL_CTX_set_mode(ctx, SSL_MODE_ENABLE_PARTIAL_WRITE);
     }
 }
 
@@ -207,6 +201,7 @@ asio::awaitable<void> HttpServiceImpl::handleAccept() {
     while (true) {
         asio::ip::tcp::socket socket(io_context);
         co_await acceptor.async_accept(socket, asio::use_awaitable);
+        SESE_DEBUG("new connection");
         co_spawn(io_context, [this, &socket]()-> asio::awaitable<void> {
             auto remote_address = sese::internal::net::convert(socket.remote_endpoint());
             if (connection_callback && !connection_callback(remote_address)) {
@@ -257,13 +252,6 @@ asio::awaitable<void> HttpServiceImpl::handleSslAccept() {
 bool HttpServiceImpl::startup() {
     asio::error_code error;
 
-    if (ssl_context) {
-        auto ctx = ssl_context->native_handle();
-        // SSL_CTX_set_alpn_protos(ctx, alpn_protos, sizeof(alpn_protos));
-        SSL_CTX_set_alpn_select_cb(ctx, alpnCallback, nullptr);
-        SSL_CTX_set_mode(ctx, SSL_MODE_ENABLE_PARTIAL_WRITE);
-    }
-
     error = acceptor.open(endpoint.protocol(), error);
     if (error)
         return false;
@@ -279,6 +267,13 @@ bool HttpServiceImpl::startup() {
     error = acceptor.listen(asio::socket_base::max_listen_connections, error);
     if (error)
         return false;
+
+    co_spawn(io_context, [this]()-> asio::awaitable<void> {
+        if (this->ssl_context.has_value()) {
+            co_return co_await handleSslAccept();
+        }
+        co_return co_await handleAccept();
+    }, asio::detached);
 
     for (auto &&th: threads) {
         th.start();

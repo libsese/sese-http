@@ -40,7 +40,7 @@ struct Handleable {
     std::vector<sese::net::http::Range> ranges;
     sese::net::IPAddress::Ptr remote_address{};
     bool keepalive = false;
-    size_t timeout = 5;
+    size_t timeout;
     sese::StopWatch stopwatch;
 };
 
@@ -58,7 +58,7 @@ struct HttpConnection : Handleable {
 
     virtual asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) = 0;
 
-    virtual void setTimeout() = 0;
+    virtual void onTimeout(const asio::error_code &code) = 0;
 
     HttpServiceImpl *service;
     bool is0x0a = false;
@@ -67,6 +67,8 @@ struct HttpConnection : Handleable {
     asio::steady_timer timer;
 
     asio::awaitable<void> handle();
+
+    asio::awaitable<void> writeHeader();
 
     asio::awaitable<void> writeBody();
 
@@ -90,7 +92,7 @@ struct HttpConnectionImpl final : HttpConnection {
 
     asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) override;
 
-    void setTimeout() override;
+    void onTimeout(const asio::error_code &code) override;
 
     Socket socket;
 };
@@ -110,7 +112,7 @@ struct HttpsConnectionImpl final : HttpConnection {
 
     asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) override;
 
-    void setTimeout() override;
+    void onTimeout(const asio::error_code &code) override;
 
     Stream stream;
 };

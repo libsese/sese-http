@@ -27,7 +27,8 @@ HttpConnection::HttpConnection(
     asio::io_context &io_context,
     const sese::net::IPAddress::Ptr &addr,
     size_t timeout)
-    : service(service), timer(io_context, asio::chrono::seconds{timeout}) {
+    : service(service), timer(io_context) {
+    this->timeout = timeout;
 }
 
 HttpConnectionImpl::HttpConnectionImpl(
@@ -54,15 +55,13 @@ asio::awaitable<size_t> HttpConnectionImpl::asyncWrite(const void *buffer, size_
     co_return size;
 }
 
-void HttpConnectionImpl::setTimeout() {
-    timer.async_wait([&](const asio::error_code &code) {
-        if (code == asio::error::operation_aborted) {
-            // cancel
-        } else {
-            // timeout
-            socket.cancel();
-        }
-    });
+void HttpConnectionImpl::onTimeout(const asio::error_code &code) {
+    if (code == asio::error::operation_aborted) {
+        // cancel
+    } else {
+        // timeout
+        socket.cancel();
+    }
 }
 
 HttpsConnectionImpl::HttpsConnectionImpl(
@@ -89,13 +88,11 @@ asio::awaitable<size_t> HttpsConnectionImpl::asyncWrite(const void *buffer, size
     co_return size;
 }
 
-void HttpsConnectionImpl::setTimeout() {
-    timer.async_wait([&](const asio::error_code &code) {
-        if (code == asio::error::operation_aborted) {
-            // cancel
-        } else {
-            // timeout
-            stream.lowest_layer().cancel();
-        }
-    });
+void HttpsConnectionImpl::onTimeout(const asio::error_code &code) {
+    if (code == asio::error::operation_aborted) {
+        // cancel
+    } else {
+        // timeout
+        stream.lowest_layer().cancel();
+    }
 }
