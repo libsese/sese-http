@@ -198,9 +198,13 @@ uni_handle:
 }
 
 asio::awaitable<void> HttpServiceImpl::handleAccept() {
-    while (true) {
+    asio::error_code error;
+    while (error != asio::error::operation_aborted) {
         asio::ip::tcp::socket socket(io_context);
-        co_await acceptor.async_accept(socket, asio::use_awaitable);
+        co_await acceptor.async_accept(socket, redirect_error(asio::use_awaitable, error));
+        if (error) {
+            continue;
+        }
         SESE_DEBUG("new connection");
         co_spawn(io_context, [this, &socket]()-> asio::awaitable<void> {
             auto remote_address = sese::internal::net::convert(socket.remote_endpoint());

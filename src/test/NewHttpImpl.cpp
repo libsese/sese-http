@@ -32,9 +32,8 @@ int main(int argc, char **argv) {
     if (!impl->startup()) {
         // SESE_ERROR("exit with {}", impl->getLastError());
         return 0;
-    } else {
-        while (true) {
-            sese::sleep(1);
-        }
+    }
+    while (true) {
+        sese::sleep(1);
     }
 }

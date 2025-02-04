@@ -11,12 +11,13 @@ asio::awaitable<void> HttpConnection::handle() {
         while (!recv_status) {
             char buffer[MTU_VALUE];
             auto readed = co_await asyncRead(buffer, MTU_VALUE);
-            if (first) {
-                SESE_INFO("cancel");
-                timer.cancel();
-            } else {
-                first = false;
-            }
+            // todo bug
+            // if (first) {
+            //     SESE_INFO("cancel");
+            //     timer.cancel();
+            // } else {
+            //     first = false;
+            // }
             builder.write(buffer, readed);
             for (int i = 0; i < readed; ++i) {
                 if (is0x0a && buffer[i] == '\r') {
@@ -60,13 +61,28 @@ asio::awaitable<void> HttpConnection::handle() {
             co_await writeBody();
         }
         if (keepalive) {
+            conn_type = ConnType::NONE;
+            is0x0a = false;
+            recv_status = false;
+            request.clear();
+            request.queryArgsClear();
+            request.getBody().freeCapacity();
+            if (auto cookies = request.getCookies()) {
+                cookies->clear();
+            }
+            response.setCode(200);
+            response.clear();
+            response.getBody().freeCapacity();
+            if (auto cookies = response.getCookies()) {
+                cookies->clear();
+            }
             // todo bug
-            SESE_INFO("set timeout");
-            timer.expires_after(asio::chrono::seconds(timeout));
-            timer.async_wait([&](const asio::error_code &code) {
-                SESE_INFO("timeouted");
-                this->onTimeout(code);
-            });
+            // SESE_INFO("set timeout");
+            // timer.expires_after(asio::chrono::seconds(timeout));
+            // timer.async_wait([&](const asio::error_code &code) {
+            //     SESE_INFO("timeouted");
+            //     this->onTimeout(code);
+            // });
         }
     } while (keepalive);
 }
