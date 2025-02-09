@@ -6,6 +6,8 @@
 #include <sese/net/http/HttpServletContext.h>
 #include <sese/net/http/Range.h>
 #include <sese/net/http/Controller.h>
+#include <sese/net/http/DynamicTable.h>
+#include <sese/net/http/Http2Frame.h>
 #include <sese/io/File.h>
 #include <sese/io/ByteBuilder.h>
 #include <sese/util/StopWatch.h>
@@ -114,6 +116,125 @@ struct HttpsConnectionImpl final : HttpConnection {
     asio::awaitable<size_t> asyncRead(void *buffer, size_t size) override;
 
     asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) override;
+
+    void onTimeout() override;
+
+    Stream stream;
+};
+
+struct HttpStream final : Handleable {
+    using Ptr = std::shared_ptr<HttpStream>;
+
+    HttpStream(uint32_t id, uint32_t write_window_size, const sese::net::IPAddress::Ptr &addr);
+
+    uint32_t id;
+    uint32_t endpoint_window_size;
+    uint32_t window_size = 0;
+    uint32_t continue_type = 0;
+    bool end_headers = false;
+    bool end_stream = false;
+    bool do_response = false;
+
+    sese::io::ByteBuilder builder;
+};
+
+struct HttpConnectionEx {
+    HttpConnectionEx(
+        HttpServiceImpl *service,
+        asio::io_context &io_context,
+        const sese::net::IPAddress::Ptr &addr,
+        size_t timeout
+    );
+
+    virtual ~HttpConnectionEx() = default;
+
+    virtual asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) = 0;
+
+    virtual asio::awaitable<size_t> asyncRead(void *buffer, size_t size) = 0;
+
+    virtual void onTimeout() = 0;
+
+    HttpServiceImpl *service;
+    sese::net::IPAddress::Ptr address;
+    bool keepalive = false;
+    asio::steady_timer timer;
+    size_t timeout;
+
+    uint32_t accept_stream_count = 0;
+    uint32_t latest_stream_ident = 0;
+
+    // The maximum local frame size
+    static constexpr uint32_t MAX_FRAME_SIZE = 16384;
+    // Local initial window value
+    static constexpr uint32_t INIT_WINDOW_SIZE = 65535;
+    // Default dynamic table size
+    static constexpr uint32_t HEADER_TABLE_SIZE = 8192;
+    // The size of a single connection concurrency
+    static constexpr uint32_t MAX_CONCURRENT_STREAMS = 16;
+
+    uint32_t header_table_size = 4096;
+    uint32_t enable_push = 0;
+    uint32_t max_concurrent_stream = 0;
+    // The value of the initial window on the peer
+    uint32_t endpoint_init_window_size = 65535;
+    // Write to the peer window size
+    uint32_t endpoint_window_size = 65535;
+    // The size of the local read window
+    uint32_t window_size = 65535;
+    // The maximum size of the peer frame
+    uint32_t endpoint_max_frame_size = 16384;
+    // The frame size used
+    uint32_t max_frame_size = 16384;
+    uint32_t max_header_list_size = 0;
+    sese::net::http::DynamicTable req_dynamic_table;
+    sese::net::http::DynamicTable resp_dynamic_table;
+    std::map<uint32_t, HttpStream::Ptr> streams;
+    std::set<uint32_t> closed_streams;
+
+    /// Send queues
+    std::vector<sese::net::http::Http2Frame::Ptr> pre_vector;
+    std::vector<sese::net::http::Http2Frame::Ptr> vector;
+    std::vector<asio::const_buffer> asio_buffers;
+
+    /// Close stream
+    /// @param id Stream ID
+    // void close(uint32_t id);
+};
+
+struct HttpConnectionExImpl final : HttpConnectionEx {
+    using Socket = asio::ip::tcp::socket;
+
+    HttpConnectionExImpl(
+        HttpServiceImpl *service,
+        asio::io_context &io_context,
+        const sese::net::IPAddress::Ptr &addr,
+        size_t timeout,
+        Socket socket
+    );
+
+    asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) override;
+
+    asio::awaitable<size_t> asyncRead(void *buffer, size_t size) override;
+
+    void onTimeout() override;
+
+    Socket socket;
+};
+
+struct HttpsConnectionExImpl final : HttpConnectionEx {
+    using Stream = asio::ssl::stream<asio::ip::tcp::socket>;
+
+    HttpsConnectionExImpl(
+        HttpServiceImpl *service,
+        asio::io_context &io_context,
+        const sese::net::IPAddress::Ptr &addr,
+        size_t timeout,
+        Stream stream
+    );
+
+    asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) override;
+
+    asio::awaitable<size_t> asyncRead(void *buffer, size_t size) override;
 
     void onTimeout() override;
 
