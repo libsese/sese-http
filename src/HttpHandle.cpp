@@ -205,7 +205,6 @@ asio::awaitable<void> HttpServiceImpl::handleAccept() {
         if (error) {
             continue;
         }
-        SESE_DEBUG("new connection");
         co_spawn(io_context, [this, &socket]()-> asio::awaitable<void> {
             auto remote_address = sese::internal::net::convert(socket.remote_endpoint());
             if (connection_callback && !connection_callback(remote_address)) {

@@ -1,5 +1,7 @@
 #include "Http.h"
 
+#include <sese/Log.h>
+
 int HttpServiceImpl::alpnCallback(
     SSL *ssl,
     const uint8_t **out,
@@ -27,8 +29,13 @@ HttpConnection::HttpConnection(
     asio::io_context &io_context,
     const sese::net::IPAddress::Ptr &addr,
     size_t timeout)
-    : service(service), timer(io_context) {
+    : service(service), timer(io_context), address(addr) {
     this->timeout = timeout;
+    SESE_INFO("new connection");
+}
+
+HttpConnection::~HttpConnection() {
+    SESE_INFO("connection close");
 }
 
 HttpConnectionImpl::HttpConnectionImpl(
@@ -55,13 +62,8 @@ asio::awaitable<size_t> HttpConnectionImpl::asyncWrite(const void *buffer, size_
     co_return size;
 }
 
-void HttpConnectionImpl::onTimeout(const asio::error_code &code) {
-    if (code == asio::error::operation_aborted) {
-        // cancel
-    } else {
-        // timeout
-        socket.cancel();
-    }
+void HttpConnectionImpl::onTimeout() {
+    socket.cancel();
 }
 
 HttpsConnectionImpl::HttpsConnectionImpl(
@@ -88,11 +90,6 @@ asio::awaitable<size_t> HttpsConnectionImpl::asyncWrite(const void *buffer, size
     co_return size;
 }
 
-void HttpsConnectionImpl::onTimeout(const asio::error_code &code) {
-    if (code == asio::error::operation_aborted) {
-        // cancel
-    } else {
-        // timeout
-        stream.lowest_layer().cancel();
-    }
+void HttpsConnectionImpl::onTimeout() {
+    stream.lowest_layer().cancel();
 }

@@ -11,13 +11,10 @@ asio::awaitable<void> HttpConnection::handle() {
         while (!recv_status) {
             char buffer[MTU_VALUE];
             auto readed = co_await asyncRead(buffer, MTU_VALUE);
-            // todo bug
-            // if (first) {
-            //     SESE_INFO("cancel");
-            //     timer.cancel();
-            // } else {
-            //     first = false;
-            // }
+            if (first) {
+                timer.cancel();
+            }
+            first = false;
             builder.write(buffer, readed);
             for (int i = 0; i < readed; ++i) {
                 if (is0x0a && buffer[i] == '\r') {
@@ -76,13 +73,13 @@ asio::awaitable<void> HttpConnection::handle() {
             if (auto cookies = response.getCookies()) {
                 cookies->clear();
             }
-            // todo bug
-            // SESE_INFO("set timeout");
-            // timer.expires_after(asio::chrono::seconds(timeout));
-            // timer.async_wait([&](const asio::error_code &code) {
-            //     SESE_INFO("timeouted");
-            //     this->onTimeout(code);
-            // });
+            timer.expires_after(asio::chrono::seconds(timeout));
+            timer.async_wait([&](const asio::error_code &code) {
+                if (code == asio::error::operation_aborted) {
+                } else {
+                    this->onTimeout();
+                }
+            });
         }
     } while (keepalive);
 }

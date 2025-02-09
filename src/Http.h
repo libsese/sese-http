@@ -54,17 +54,20 @@ struct HttpConnection : Handleable {
         size_t timeout
     );
 
+    ~HttpConnection() override;
+
     virtual asio::awaitable<size_t> asyncRead(void *buffer, size_t size) = 0;
 
     virtual asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) = 0;
 
-    virtual void onTimeout(const asio::error_code &code) = 0;
+    virtual void onTimeout() = 0;
 
     HttpServiceImpl *service;
     bool is0x0a = false;
     bool recv_status = false;
     sese::io::ByteBuilder builder;
     asio::steady_timer timer;
+    sese::net::IPAddress::Ptr address;
 
     asio::awaitable<void> handle();
 
@@ -92,7 +95,7 @@ struct HttpConnectionImpl final : HttpConnection {
 
     asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) override;
 
-    void onTimeout(const asio::error_code &code) override;
+    void onTimeout() override;
 
     Socket socket;
 };
@@ -112,7 +115,7 @@ struct HttpsConnectionImpl final : HttpConnection {
 
     asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) override;
 
-    void onTimeout(const asio::error_code &code) override;
+    void onTimeout() override;
 
     Stream stream;
 };
