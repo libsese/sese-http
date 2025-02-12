@@ -2,6 +2,7 @@
 
 #include <asio.hpp>
 #include <asio/ssl/stream.hpp>
+#include <optional>
 
 #include <sese/net/http/HttpServletContext.h>
 #include <sese/net/http/Range.h>
@@ -154,6 +155,27 @@ struct HttpConnectionEx {
 
     virtual void onTimeout() = 0;
 
+    asio::awaitable<void> handle();
+
+    asio::awaitable<bool> readMagic();
+
+    asio::awaitable<bool> readFrameHeader(sese::net::http::Http2FrameInfo &info);
+
+    /// write goaway frame
+    /// \param latest_stream_id The last stream ID
+    /// \param flags Flags
+    /// \param error_code Error code
+    /// \param msg Error message, can be nullptr
+    /// \param immediately Immediately send, else just push to the queue(default)
+    /// \return Success or not
+    asio::awaitable<bool> writeGoawayFrame(
+        uint32_t latest_stream_id,
+        uint8_t flags,
+        uint32_t error_code,
+        const std::optional<std::string> &msg = nullptr,
+        bool immediately = false
+    );
+
     HttpServiceImpl *service;
     sese::net::IPAddress::Ptr address;
     bool keepalive = false;
@@ -194,7 +216,6 @@ struct HttpConnectionEx {
     /// Send queues
     std::vector<sese::net::http::Http2Frame::Ptr> pre_vector;
     std::vector<sese::net::http::Http2Frame::Ptr> vector;
-    std::vector<asio::const_buffer> asio_buffers;
 
     /// Close stream
     /// @param id Stream ID

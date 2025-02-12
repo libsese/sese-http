@@ -20,6 +20,7 @@ find_package(asio CONFIG REQUIRED)
 add_library(sese-http
         src/Http.h
         src/Http1Protocol.cpp
+        src/Http2Protocol.cpp
         src/HttpHandle.cpp
         src/TcpTlsWrapper.cpp
 )

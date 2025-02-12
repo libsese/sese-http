@@ -237,7 +237,14 @@ asio::awaitable<void> HttpServiceImpl::handleSslAccept() {
                 co_await connection.handle();
             }, asio::detached);
         } else if (proto == "h2") {
-            // todo h2 implementation
+            co_spawn(io_context, [this, &stream]() -> asio::awaitable<void> {
+                auto remote_address = sese::internal::net::convert(stream.lowest_layer().remote_endpoint());
+                if (connection_callback && !connection_callback(remote_address)) {
+                    co_return;
+                }
+                HttpsConnectionExImpl connection(this, io_context, remote_address, timeout, std::move(stream));
+                co_await connection.handle();
+            });
         } else {
             // No protocol, switch to http/1.1
             co_spawn(io_context, [this, &stream]()-> asio::awaitable<void> {
