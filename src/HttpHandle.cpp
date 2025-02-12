@@ -253,8 +253,6 @@ asio::awaitable<void> HttpServiceImpl::handleSslAccept() {
 }
 
 bool HttpServiceImpl::startup() {
-    asio::error_code error;
-
     error = acceptor.open(endpoint.protocol(), error);
     if (error)
         return false;
@@ -284,9 +282,8 @@ bool HttpServiceImpl::startup() {
     return true;
 }
 
-void HttpServiceImpl::shutdown() {
+bool HttpServiceImpl::shutdown() {
     post(acceptor.get_executor(), [this] {
-        asio::error_code error;
         error = acceptor.close(error);
     });
     post(io_context.get_executor(), [this] {
@@ -297,4 +294,13 @@ void HttpServiceImpl::shutdown() {
             th.join();
         }
     }
+    return true;
+}
+
+int HttpServiceImpl::getLastError() {
+    return error.value();
+}
+
+std::string HttpServiceImpl::getLastErrorMessage() {
+    return error.message();
 }

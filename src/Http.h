@@ -241,7 +241,7 @@ struct HttpsConnectionExImpl final : HttpConnectionEx {
     Stream stream;
 };
 
-struct HttpServiceImpl final {
+struct HttpServiceImpl final : sese::service::Service {
     HttpServiceImpl(
         const sese::net::IPAddress::Ptr &address,
         SSLContextPtr ssl_context,
@@ -255,9 +255,13 @@ struct HttpServiceImpl final {
         FilterCallback &tail_filter
     );
 
-    bool startup();
+    bool startup() override;
 
-    void shutdown();
+    bool shutdown() override;
+
+    int getLastError() override;
+
+    std::string getLastErrorMessage() override;
 
     void handleFilter(Handleable *handleable);
 
@@ -272,6 +276,7 @@ private:
     asio::ip::tcp::endpoint endpoint;
     std::optional<asio::ssl::context> ssl_context;
     asio::ip::tcp::acceptor acceptor;
+    asio::error_code error;
 
     static constexpr unsigned char ALPN_PROTOS[] = "\x2h2\x8http/1.1";
 
