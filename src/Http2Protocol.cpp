@@ -1,4 +1,5 @@
 #include "Http.h"
+#include "sese/io/InputBufferWrapper.h"
 
 asio::awaitable<void> HttpConnectionEx::handle() {
     using namespace sese::net::http;
@@ -6,9 +7,8 @@ asio::awaitable<void> HttpConnectionEx::handle() {
         co_return;
     }
     // todo writeSettingsFrame
-    Http2FrameInfo info{};
     while (true) {
-        if (!co_await readFrameHeader(info)) {
+        if (!co_await readFrameHeader()) {
             co_return;
         }
         auto iterator = streams.find(info.ident);
@@ -57,6 +57,81 @@ asio::awaitable<void> HttpConnectionEx::handle() {
     }
 }
 
+asio::awaitable<uint8_t> HttpConnectionEx::handleSettingsFrame() {
+    using namespace sese::net::http;
+    constexpr auto SETTINGS_FRAME_BUFFER_SIZE = 32 * 6;
+    if (info.ident != 0) {
+        co_return GOAWAY_PROTOCOL_ERROR;
+    }
+    if (info.flags & SETTINGS_FLAGS_ACK) {
+        if (info.length) {
+            co_return GOAWAY_FRAME_SIZE_ERROR;
+        }
+        expect_ack = false;
+        co_return UINT8_MAX;
+    }
+    if (info.length % 6) {
+        co_return GOAWAY_FRAME_SIZE_ERROR;
+    }
+    char raw_buffer[SETTINGS_FRAME_BUFFER_SIZE];
+    if (info.length > SETTINGS_FRAME_BUFFER_SIZE ||
+        info.length != co_await asyncRead(raw_buffer, info.length)) {
+        co_return GOAWAY_FRAME_SIZE_ERROR;
+    }
+
+    char value_buffer[6];
+    auto ident = reinterpret_cast<uint16_t *>(&value_buffer[0]);
+    auto value = reinterpret_cast<uint32_t *>(&value_buffer[2]);
+    auto input = sese::io::InputBufferWrapper(raw_buffer, info.length);
+
+    while (input.read(value_buffer, 6) == 6) {
+        *ident = FromBigEndian16(*ident);
+        *value = FromBigEndian32(*value);
+
+        switch (*ident) {
+            case SETTINGS_HEADER_TABLE_SIZE:
+                this->req_dynamic_table.resize(*value);
+                this->header_table_size = *value;
+                break;
+            case SETTINGS_MAX_CONCURRENT_STREAMS:
+                this->max_concurrent_stream = *value == 0 ? 100 : *value;
+                break;
+            case SETTINGS_MAX_FRAME_SIZE:
+                if (*value > 16777215 || *value < 16384) {
+                    co_return GOAWAY_PROTOCOL_ERROR;
+                }
+                this->endpoint_max_frame_size = *value;
+                this->max_frame_size = std::min(this->endpoint_max_frame_size, MAX_FRAME_SIZE);
+                break;
+            case SETTINGS_ENABLE_PUSH:
+                if (*value <= 1) {
+                    this->enable_push = *value;
+                } else {
+                    co_return GOAWAY_PROTOCOL_ERROR;
+                }
+                break;
+            case SETTINGS_MAX_HEADER_LIST_SIZE:
+                this->max_header_list_size = *value;
+                req_dynamic_table.resize(max_header_list_size);
+                resp_dynamic_table.resize(max_header_list_size);
+                break;
+            case SETTINGS_INITIAL_WINDOW_SIZE:
+                if (accept_stream_count) {
+                    co_return GOAWAY_FLOW_CONTROL_ERROR;
+                }
+                if (*value > 2147483647) {
+                    co_return GOAWAY_FLOW_CONTROL_ERROR;
+                }
+                this->endpoint_init_window_size = *value;
+                break;
+            default:
+                break;
+        }
+    }
+    co_return 0;
+}
+
+
 asio::awaitable<bool> HttpConnectionEx::readMagic() {
     char buffer[24];
     auto len = co_await asyncRead(buffer, sizeof(buffer));
@@ -67,7 +142,7 @@ asio::awaitable<bool> HttpConnectionEx::readMagic() {
     co_return true;
 }
 
-asio::awaitable<bool> HttpConnectionEx::readFrameHeader(sese::net::http::Http2FrameInfo &info) {
+asio::awaitable<bool> HttpConnectionEx::readFrameHeader() {
     using namespace sese::net::http;
     char buffer[9];
     auto len = co_await asyncRead(buffer, sizeof(buffer));

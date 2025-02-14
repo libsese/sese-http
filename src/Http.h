@@ -157,9 +157,15 @@ struct HttpConnectionEx {
 
     asio::awaitable<void> handle();
 
+    /// \brief handle settings frame
+    /// \retval UIN8_MAX this frame is ack frame
+    /// \retval 0 all be ok
+    /// \retval else error code
+    asio::awaitable<uint8_t> handleSettingsFrame();
+
     asio::awaitable<bool> readMagic();
 
-    asio::awaitable<bool> readFrameHeader(sese::net::http::Http2FrameInfo &info);
+    asio::awaitable<bool> readFrameHeader();
 
     /// write goaway frame
     /// \param latest_stream_id The last stream ID
@@ -176,9 +182,11 @@ struct HttpConnectionEx {
         bool immediately = false
     );
 
+    sese::net::http::Http2FrameInfo info;
     HttpServiceImpl *service;
     sese::net::IPAddress::Ptr address;
     bool keepalive = false;
+    bool expect_ack = false;
     asio::steady_timer timer;
     size_t timeout;
 
