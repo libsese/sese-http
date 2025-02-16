@@ -163,6 +163,8 @@ struct HttpConnectionEx {
     /// \retval else error code
     asio::awaitable<uint8_t> handleSettingsFrame();
 
+    asio::awaitable<bool> handleWindowUpdate();
+
     asio::awaitable<bool> readMagic();
 
     asio::awaitable<bool> readFrameHeader();
@@ -174,13 +176,28 @@ struct HttpConnectionEx {
     /// \param msg Error message, can be nullptr
     /// \param immediately Immediately send, else just push to the queue(default)
     /// \return Success or not
-    asio::awaitable<bool> writeGoawayFrame(
+    asio::awaitable<bool> postGoawayFrame(
         uint32_t latest_stream_id,
         uint8_t flags,
         uint32_t error_code,
         const std::optional<std::string> &msg = nullptr,
         bool immediately = false
     );
+
+    asio::awaitable<bool> postRstStreamFrame(
+        uint32_t stream_id,
+        uint8_t flags,
+        uint32_t error_code,
+        bool immediately = false
+    );
+
+    void postSettingsFrame();
+
+    void postAckFrame();
+
+    void postWindowUpdateFrame(uint32_t stream_id, uint8_t flags, uint32_t window_size);
+
+    bool postHeadersFrame(const HttpStream::Ptr &stream, bool verify_end_stream);
 
     sese::net::http::Http2FrameInfo info;
     HttpServiceImpl *service;
@@ -221,6 +238,7 @@ struct HttpConnectionEx {
     std::map<uint32_t, HttpStream::Ptr> streams;
     std::set<uint32_t> closed_streams;
 
+    char buffer[MAX_FRAME_SIZE];
     /// Send queues
     std::vector<sese::net::http::Http2Frame::Ptr> pre_vector;
     std::vector<sese::net::http::Http2Frame::Ptr> vector;
