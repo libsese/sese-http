@@ -165,6 +165,10 @@ struct HttpConnectionEx {
 
     asio::awaitable<bool> handleWindowUpdate();
 
+    void handleRstStreamFrame();
+
+    void triggerWrite();
+
     asio::awaitable<bool> readMagic();
 
     asio::awaitable<bool> readFrameHeader();

@@ -167,6 +167,38 @@ asio::awaitable<bool> HttpConnectionEx::handleWindowUpdate() {
     co_return true;
 }
 
+void HttpConnectionEx::handleRstStreamFrame() {
+    using namespace sese::net::http;
+    if (info.ident == 0) {
+        postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR, "");
+        return;
+    }
+    if (info.length != 4) {
+        postGoawayFrame(0, 0, GOAWAY_FRAME_SIZE_ERROR, "");
+        return;
+    }
+
+    if (closed_streams.contains(info.ident)) {
+        // postGoawayFrame(info.ident, 0, GOAWAY_STREAM_CLOSED, "");
+        readFrameHeader();
+    }
+
+    auto iterator = streams.find(info.ident);
+    if (iterator == streams.end()) {
+        postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR, "");
+        return;
+    }
+    auto stream = iterator->second;
+    // todo close(stream->id);
+
+    uint32_t code;
+    memcpy(buffer, &code, 4);
+    code = FromBigEndian32(code);
+}
+
+void HttpConnectionEx::triggerWrite() {
+    // todo co_spawn
+}
 
 asio::awaitable<bool> HttpConnectionEx::readMagic() {
     auto len = co_await asyncRead(buffer, 24);
@@ -229,6 +261,7 @@ asio::awaitable<bool> HttpConnectionEx::postGoawayFrame(
         co_return true;
     }
     pre_vector.push_back(std::move(frame));
+    triggerWrite();
     co_return true;
 }
 
@@ -254,6 +287,7 @@ asio::awaitable<bool> HttpConnectionEx::postRstStreamFrame(
         co_return true;
     }
     pre_vector.push_back(std::move(frame));
+    triggerWrite();
     co_return true;
 }
 
@@ -283,8 +317,8 @@ void HttpConnectionEx::postSettingsFrame() {
         memcpy(buffer + pos, &value, sizeof(value));
         pos += sizeof(value);
     }
-
     expect_ack = true;
+    triggerWrite();
     pre_vector.push_back(std::move(frame));
 }
 
@@ -293,6 +327,7 @@ void HttpConnectionEx::postAckFrame() {
     frame->type = sese::net::http::FRAME_TYPE_SETTINGS;
     frame->flags = sese::net::http::SETTINGS_FLAGS_ACK;
     frame->buildFrameHeader();
+    triggerWrite();
     pre_vector.push_back(std::move(frame));
 }
 
@@ -309,6 +344,7 @@ void HttpConnectionEx::postWindowUpdateFrame(
     window_size = ToBigEndian32(window_size);
     memcpy(frame->getFrameContentBuffer(), &window_size, 4);
     pre_vector.push_back(std::move(frame));
+    triggerWrite();
 }
 
 bool HttpConnectionEx::postHeadersFrame(const HttpStream::Ptr &stream, bool verify_end_stream) {
@@ -327,5 +363,6 @@ bool HttpConnectionEx::postHeadersFrame(const HttpStream::Ptr &stream, bool veri
     }
     frame->buildFrameHeader();
     pre_vector.push_back(std::move(frame));
+    triggerWrite();
     return result;
 }
