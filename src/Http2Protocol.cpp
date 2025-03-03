@@ -1,12 +1,14 @@
 #include "Http.h"
 #include "sese/io/InputBufferWrapper.h"
+#include "sese/net/http/HPackUtil.h"
+#include "sese/net/http/HttpConverter.h"
 
 asio::awaitable<void> HttpConnectionEx::handle() {
     using namespace sese::net::http;
     if (!co_await readMagic()) {
         co_return;
     }
-    // todo writeSettingsFrame
+    // todo postSettingsFrame
     while (true) {
         if (!co_await readFrameHeader()) {
             co_return;
@@ -59,7 +61,6 @@ asio::awaitable<void> HttpConnectionEx::handle() {
 
 asio::awaitable<uint8_t> HttpConnectionEx::handleSettingsFrame() {
     using namespace sese::net::http;
-    constexpr auto SETTINGS_FRAME_BUFFER_SIZE = 32 * 6;
     if (info.ident != 0) {
         co_return GOAWAY_PROTOCOL_ERROR;
     }
@@ -73,16 +74,11 @@ asio::awaitable<uint8_t> HttpConnectionEx::handleSettingsFrame() {
     if (info.length % 6) {
         co_return GOAWAY_FRAME_SIZE_ERROR;
     }
-    char raw_buffer[SETTINGS_FRAME_BUFFER_SIZE];
-    if (info.length > SETTINGS_FRAME_BUFFER_SIZE ||
-        info.length != co_await asyncRead(raw_buffer, info.length)) {
-        co_return GOAWAY_FRAME_SIZE_ERROR;
-    }
 
     char value_buffer[6];
     auto ident = reinterpret_cast<uint16_t *>(&value_buffer[0]);
     auto value = reinterpret_cast<uint32_t *>(&value_buffer[2]);
-    auto input = sese::io::InputBufferWrapper(raw_buffer, info.length);
+    auto input = sese::io::InputBufferWrapper(buffer, info.length);
 
     while (input.read(value_buffer, 6) == 6) {
         *ident = FromBigEndian16(*ident);
@@ -194,6 +190,141 @@ void HttpConnectionEx::handleRstStreamFrame() {
     uint32_t code;
     memcpy(buffer, &code, 4);
     code = FromBigEndian32(code);
+}
+
+void HttpConnectionEx::handleGoawayFrame() {
+    using namespace sese::net::http;
+    if (info.ident != 0) {
+        postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR);
+        return;
+    }
+    auto iterator = streams.find(info.ident);
+    if (iterator != streams.end()) {
+        iterator->second->continue_type = info.type;
+    }
+    uint32_t latest_stream;
+    memcpy(&latest_stream, buffer, sizeof(latest_stream));
+    latest_stream = FromBigEndian32(latest_stream);
+    uint32_t error_code;
+    memcpy(&error_code, buffer + 4, sizeof(latest_stream));
+    error_code = FromBigEndian32(error_code);
+    if (info.length - 8) {
+        auto msg = std::string(buffer + 8, info.length - 8);
+        // SESE_WARN("FAILED: LS {} CODE {} MSG {}", latest_stream, error_code, msg);
+        if (msg == "shutdown") {
+            return;
+        }
+    } else {
+        // SESE_WARN("FAILED: LS {} CODE {}", latest_stream, error_code);
+    }
+}
+
+void HttpConnectionEx::handleHeadersFrame() {
+    using namespace sese::net::http;
+    timer.cancel();
+    if (info.ident == 0 ||
+        info.ident % 2 != 1) {
+        postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR);
+        return;
+        }
+
+    if (closed_streams.contains(info.ident)) {
+        postGoawayFrame(info.ident, 0, GOAWAY_STREAM_CLOSED);
+        return;
+    }
+
+    HttpStream::Ptr stream;
+    auto iterator = streams.find(info.ident);
+    if (info.type == FRAME_TYPE_HEADERS) {
+        if (iterator == streams.end()) {
+            if (info.ident < latest_stream_ident) {
+                postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR);
+                return;
+            }
+            if (streams.size() > MAX_CONCURRENT_STREAMS) {
+                postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR, "shutdown", true);
+                return;
+            }
+            stream = std::make_shared<HttpStream>(info.ident, endpoint_init_window_size, address);
+            streams[info.ident] = stream;
+            accept_stream_count += 1;
+            latest_stream_ident = info.ident;
+        } else {
+            stream = iterator->second;
+            if (stream->end_headers) {
+                postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR);
+                return;
+            }
+        }
+    } else {
+        if (iterator == streams.end()) {
+            postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR);
+            return;
+        }
+        stream = iterator->second;
+    }
+
+    uint8_t offset = 0;
+    uint8_t padded = 0;
+    stream->continue_type = info.type;
+    if (info.flags & FRAME_FLAG_PADDED) {
+        padded = buffer[0];
+        offset += 1;
+    }
+    if (info.flags & FRAME_FLAG_PRIORITY) {
+        uint32_t dependency;
+        memcpy(&dependency, buffer + offset, 4);
+        dependency = FromBigEndian32(dependency);
+        offset += 4;
+        uint8_t priority = buffer[offset]; // NOLINT
+        offset += 1;
+
+        if (dependency == info.ident) {
+            postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR, "");
+            return;
+        }
+    }
+
+    if (padded > info.length) {
+        postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR, "");
+        return;
+    }
+
+    stream->builder.write(buffer + offset, info.length - padded - offset);
+
+    if (info.flags & FRAME_FLAG_END_HEADERS) {
+        stream->end_headers = true;
+    }
+    if (info.flags & FRAME_FLAG_END_STREAM) {
+        stream->end_stream = true;
+    }
+
+    if (stream->end_headers) {
+        auto rt = HPackUtil::decode(&stream->builder, stream->builder.getReadableSize(), req_dynamic_table, stream->request, false, true, header_table_size);
+        stream->builder.freeCapacity();
+        if (rt) {
+            postGoawayFrame(info.ident, 0, rt);
+            return;
+        }
+
+        rt = HttpConverter::convertFromHttp2(&stream->request);
+        if (!rt) {
+            postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR);
+            return;
+        }
+
+        service->handleFilter(stream.get());
+
+        if (stream->end_stream) {
+            service->handleRequest(stream.get());
+
+            HttpConverter::convert2Http2(&stream->response);
+            Header header;
+            HPackUtil::encode(&stream->builder, resp_dynamic_table, header, stream->response);
+
+            triggerWrite();
+        }
+    }
 }
 
 void HttpConnectionEx::triggerWrite() {
