@@ -169,7 +169,13 @@ struct HttpConnectionEx {
 
     void handleGoawayFrame();
 
+    void handlePingFrame();
+
+    void handlePriorityFrame();
+
     void handleHeadersFrame();
+
+    void handleDataFrame();
 
     void triggerWrite();
 

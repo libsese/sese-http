@@ -219,6 +219,75 @@ void HttpConnectionEx::handleGoawayFrame() {
     }
 }
 
+void HttpConnectionEx::handlePingFrame() {
+    using namespace sese::net::http;
+    timer.cancel();
+
+    if (info.ident != 0) {
+        postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR, "", true);
+        return;
+    }
+    if (info.length != 8) {
+        postGoawayFrame(0, 0, GOAWAY_FRAME_SIZE_ERROR);
+        return;
+    }
+    if (info.flags & SETTINGS_FLAGS_ACK) {
+        postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR, "unexpected ping with ack");
+        return;
+    }
+
+    auto frame = std::make_unique<Http2Frame>(8);
+    frame->type = FRAME_TYPE_PING;
+    frame->length = 8;
+    frame->ident = 0;
+    frame->flags = SETTINGS_FLAGS_ACK;
+    frame->buildFrameHeader();
+    memcpy(frame->getFrameContentBuffer(), buffer, 8);
+
+    pre_vector.push_back(std::move(frame));
+    triggerWrite();
+}
+
+void HttpConnectionEx::handlePriorityFrame() {
+    using namespace sese::net::http;
+    if (info.ident == 0 ||
+        info.ident % 2 != 1) {
+        postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR);
+        return;
+        }
+    if (info.length != 5) {
+        postGoawayFrame(info.ident, 0, GOAWAY_FRAME_SIZE_ERROR);
+        return;
+    }
+
+    HttpStream::Ptr stream;
+    auto iterator = streams.find(info.ident);
+    if (iterator == streams.end()) {
+        stream = std::make_shared<HttpStream>(info.ident, endpoint_init_window_size, address);
+        streams[info.ident] = stream;
+        accept_stream_count += 1;
+    } else {
+        stream = iterator->second;
+    }
+    stream->continue_type = info.type;
+
+    // Read the load but don't process it
+    uint8_t exclusive_flag = 0; // NOLINT
+    uint32_t stream_dependency = 0;
+    uint8_t weight = 0;
+
+    memcpy(&stream_dependency, buffer, 4);
+    stream_dependency = FromBigEndian32(stream_dependency);
+    exclusive_flag = (stream_dependency & 0x80000000) >> 31; // NOLINT
+    stream_dependency &= 0x7FFFFFFF;
+    memcpy(&weight, buffer + 4, 1);
+
+    if (stream_dependency == info.ident) {
+        postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR);
+        return;
+    }
+}
+
 void HttpConnectionEx::handleHeadersFrame() {
     using namespace sese::net::http;
     timer.cancel();
@@ -325,6 +394,10 @@ void HttpConnectionEx::handleHeadersFrame() {
             triggerWrite();
         }
     }
+}
+
+void HttpConnectionEx::handleDataFrame() {
+    // todo data frame
 }
 
 void HttpConnectionEx::triggerWrite() {
