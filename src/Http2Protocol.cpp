@@ -181,7 +181,7 @@ void HttpConnectionEx::handleRstStreamFrame() {
 
     auto iterator = streams.find(info.ident);
     if (iterator == streams.end()) {
-        postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR, "");
+        postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR);
         return;
     }
     auto stream = iterator->second;
@@ -209,7 +209,7 @@ void HttpConnectionEx::handleGoawayFrame() {
     memcpy(&error_code, buffer + 4, sizeof(latest_stream));
     error_code = FromBigEndian32(error_code);
     if (info.length - 8) {
-        auto msg = std::string(buffer + 8, info.length - 8);
+        auto msg = std::string_view(buffer + 8, info.length - 8);
         // SESE_WARN("FAILED: LS {} CODE {} MSG {}", latest_stream, error_code, msg);
         if (msg == "shutdown") {
             return;
@@ -254,7 +254,7 @@ void HttpConnectionEx::handlePriorityFrame() {
         info.ident % 2 != 1) {
         postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR);
         return;
-        }
+    }
     if (info.length != 5) {
         postGoawayFrame(info.ident, 0, GOAWAY_FRAME_SIZE_ERROR);
         return;
@@ -295,7 +295,7 @@ void HttpConnectionEx::handleHeadersFrame() {
         info.ident % 2 != 1) {
         postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR);
         return;
-        }
+    }
 
     if (closed_streams.contains(info.ident)) {
         postGoawayFrame(info.ident, 0, GOAWAY_STREAM_CLOSED);
@@ -369,7 +369,8 @@ void HttpConnectionEx::handleHeadersFrame() {
     }
 
     if (stream->end_headers) {
-        auto rt = HPackUtil::decode(&stream->builder, stream->builder.getReadableSize(), req_dynamic_table, stream->request, false, true, header_table_size);
+        auto rt = HPackUtil::decode(&stream->builder, stream->builder.getReadableSize(), req_dynamic_table,
+                                    stream->request, false, true, header_table_size);
         stream->builder.freeCapacity();
         if (rt) {
             postGoawayFrame(info.ident, 0, rt);
@@ -396,8 +397,97 @@ void HttpConnectionEx::handleHeadersFrame() {
     }
 }
 
-void HttpConnectionEx::handleDataFrame() {
-    // todo data frame
+void HttpConnectionEx::handleDataFrame() {\
+    using namespace sese::net::http;
+    timer.cancel();
+    if (expect_ack) {
+        postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR, "expect ack");
+        return;
+    }
+
+    if (info.ident == 0 ||
+        info.ident % 2 != 1) {
+        postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR);
+        return;
+    }
+
+    if (closed_streams.contains(info.ident)) {
+        postGoawayFrame(info.ident, 0, GOAWAY_STREAM_CLOSED);
+        return;
+    }
+
+    auto iterator = streams.find(info.ident);
+    if (iterator == streams.end()) {
+        postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR);
+        return;
+    }
+    auto stream = iterator->second;
+    if (stream->end_stream) {
+        postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR);
+    }
+
+    stream->continue_type = info.type;
+
+    if (info.length > window_size ||
+        info.length > stream->window_size) {
+        postGoawayFrame(info.ident, 0, GOAWAY_FLOW_CONTROL_ERROR);
+        return;
+    }
+
+    window_size -= info.length;
+    stream->window_size -= info.length;
+
+    if (window_size < INIT_WINDOW_SIZE / 2) {
+        postWindowUpdateFrame(0, 0, INIT_WINDOW_SIZE);
+        window_size += INIT_WINDOW_SIZE;
+    }
+    if (stream->window_size < INIT_WINDOW_SIZE / 2) {
+        postWindowUpdateFrame(stream->id, 0, INIT_WINDOW_SIZE);
+        stream->window_size += INIT_WINDOW_SIZE;
+    }
+
+    if (info.flags & FRAME_FLAG_PADDED) {
+        uint8_t padded = buffer[0];
+        if (padded > info.length) {
+            postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR);
+            return;
+        }
+
+        if (stream->conn_type != Handleable::ConnType::FILTER) {
+            stream->request.getBody().write(buffer + 1, info.length - padded - 1);
+        }
+    } else {
+        if (stream->conn_type != Handleable::ConnType::FILTER) {
+            stream->request.getBody().write(buffer, info.length);
+        }
+    }
+
+    if (info.flags & FRAME_FLAG_END_STREAM) {
+        if (stream->conn_type != Handleable::ConnType::FILTER) {
+            // If it is intercepted, the body will not be read,
+            // and there is no need to verify the length
+            if (stream->request.exist("content-length")) {
+                auto content_length = sese::toInteger(stream->request.get("content-length"));
+                if (content_length != stream->request.getBody().getReadableSize()) {
+                    postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR);
+                    return;
+                }
+            }
+        }
+        if (stream->request.exist("te") ||
+            stream->request.exist("trailer")) {
+            postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR);
+            return;
+        }
+
+        service->handleRequest(stream.get());
+
+        HttpConverter::convert2Http2(&stream->response);
+        Header header;
+        HPackUtil::encode(&stream->builder, resp_dynamic_table, header, stream->response);
+
+        triggerWrite();
+    }
 }
 
 void HttpConnectionEx::triggerWrite() {
@@ -497,7 +587,7 @@ asio::awaitable<bool> HttpConnectionEx::postRstStreamFrame(
 
 void HttpConnectionEx::postSettingsFrame() {
     using namespace sese::net::http;
-    std::vector<std::pair<uint16_t, uint32_t>> values = {
+    std::vector<std::pair<uint16_t, uint32_t> > values = {
         {SETTINGS_INITIAL_WINDOW_SIZE, INIT_WINDOW_SIZE},
         {SETTINGS_MAX_FRAME_SIZE, MAX_FRAME_SIZE},
         {SETTINGS_HEADER_TABLE_SIZE, HEADER_TABLE_SIZE},
