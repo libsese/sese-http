@@ -166,17 +166,17 @@ asio::awaitable<bool> HttpConnectionEx::handleWindowUpdate() {
 void HttpConnectionEx::handleRstStreamFrame() {
     using namespace sese::net::http;
     if (info.ident == 0) {
-        postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR, "");
+        postGoawayFrame(0, 0, GOAWAY_PROTOCOL_ERROR);
         return;
     }
     if (info.length != 4) {
-        postGoawayFrame(0, 0, GOAWAY_FRAME_SIZE_ERROR, "");
+        postGoawayFrame(0, 0, GOAWAY_FRAME_SIZE_ERROR);
         return;
     }
 
     if (closed_streams.contains(info.ident)) {
-        // postGoawayFrame(info.ident, 0, GOAWAY_STREAM_CLOSED, "");
-        readFrameHeader();
+        postGoawayFrame(info.ident, 0, GOAWAY_STREAM_CLOSED);
+        return;
     }
 
     auto iterator = streams.find(info.ident);
@@ -617,10 +617,10 @@ asio::awaitable<bool> HttpConnectionEx::postGoawayFrame(
     uint32_t latest_stream_id,
     uint8_t flags,
     uint32_t error_code,
-    const std::optional<std::string> &msg,
+    const std::string &msg,
     bool immediately) {
     using namespace sese::net::http;
-    auto frame_length = (msg.has_value() ? msg.value().length() : 0) + 8;
+    auto frame_length = msg.length() + 8;
     auto frame = std::make_unique<Http2Frame>(frame_length);
     frame->type = FRAME_TYPE_GOAWAY;
     frame->flags = flags;
@@ -631,6 +631,9 @@ asio::awaitable<bool> HttpConnectionEx::postGoawayFrame(
     error_code = ToBigEndian32(error_code);
     memcpy(frame->getFrameContentBuffer() + 0, &latest_stream_id, 4);
     memcpy(frame->getFrameContentBuffer() + 4, &error_code, 4);
+    if (!msg.empty()) {
+        memcpy(frame->getFrameContentBuffer() + 8, msg.data(), msg.length());
+    }
     if (immediately) {
         auto len = co_await asyncWrite(frame->getFrameBuffer(), frame->getFrameLength());
         if (len != frame->getFrameLength()) {

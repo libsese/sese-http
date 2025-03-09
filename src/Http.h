@@ -2,7 +2,6 @@
 
 #include <asio.hpp>
 #include <asio/ssl/stream.hpp>
-#include <optional>
 
 #include <sese/net/http/HttpServletContext.h>
 #include <sese/net/http/Range.h>
@@ -194,7 +193,7 @@ struct HttpConnectionEx {
         uint32_t latest_stream_id,
         uint8_t flags,
         uint32_t error_code,
-        const std::optional<std::string> &msg = nullptr,
+        const std::string &msg = {},
         bool immediately = false
     );
 
