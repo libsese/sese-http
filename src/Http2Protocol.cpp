@@ -492,6 +492,90 @@ void HttpConnectionEx::handleDataFrame() {\
 
 void HttpConnectionEx::triggerWrite() {
     // todo co_spawn
+    if (!is_write) {
+        return;
+    }
+    timer.cancel();
+    co_spawn(service->io_context, [this]() -> asio::awaitable<void> {
+        for (auto &&current = streams.begin(); current != streams.end();) {
+            auto stream = current->second;
+            // The flow did not enter a response state
+            if (!stream->do_response) {
+                ++current;
+                continue;
+            }
+            // General responses
+            if (stream->conn_type == Handleable::ConnType::NONE ||
+                stream->conn_type == Handleable::ConnType::FILTER ||
+                stream->conn_type == Handleable::ConnType::CONTROLLER) {
+                if (!stream->builder.eof()) {
+                    if (prepareHeadersFrame(stream)) {
+                        current = streams.erase(current);
+                        closed_streams.emplace(stream->id);
+                    } else {
+                        ++current;
+                    }
+                    continue;
+                }
+                if (!stream->response.getBody().eof()) {
+                    if (prepareDataFrame4Body(stream)) {
+                        current = streams.erase(current);
+                        closed_streams.emplace(stream->id);
+                    } else {
+                        ++current;
+                    }
+                    continue;
+                }
+
+                current = streams.erase(current);
+                closed_streams.emplace(stream->id);
+            }
+            // File downloads
+            else if (stream->conn_type == Handleable::ConnType::FILE_DOWNLOAD) {
+                if (!stream->builder.eof()) {
+                    prepareHeadersFrame(stream, false); // NOLINT
+                    ++current;
+                    continue;
+                }
+                // Single range file
+                if (stream->ranges.size() == 1) {
+                    if (prepareDataFrame4SingleRange(stream)) {
+                        current = streams.erase(current);
+                        closed_streams.emplace(stream->id);
+                    } else {
+                        ++current;
+                    }
+                }
+                // Multi-range file
+                else if (stream->ranges.size() > 1) {
+                    if (prepareDataFrame4Ranges(stream)) {
+                        current = streams.erase(current);
+                        closed_streams.emplace(stream->id);
+                    } else {
+                        ++current;
+                    }
+                }
+            } else {
+                ++current;
+            }
+        }
+
+        if (!pre_vector.empty()) {
+            vector.clear();
+            vector.swap(pre_vector);
+            // todo write
+            // checkKeepalive();
+            // writeBlocks(asio_buffers, [conn = getPtr()](const asio::error_code &ec) {
+            //     if (ec) {
+            //         conn->disponse();
+            //         return;
+            //     }
+            //     conn->handleWrite();
+            // });
+            co_await asyncRead(nullptr, 0);
+        }
+        is_write = false;
+    }, asio::detached);
 }
 
 asio::awaitable<bool> HttpConnectionEx::readMagic() {
@@ -659,4 +743,29 @@ bool HttpConnectionEx::postHeadersFrame(const HttpStream::Ptr &stream, bool veri
     pre_vector.push_back(std::move(frame));
     triggerWrite();
     return result;
+}
+
+bool HttpConnectionEx::prepareHeadersFrame(const HttpStream::Ptr &stream, bool verify_end_stream) {
+    // todo prepareHeadersFrame
+    return false;
+}
+
+bool HttpConnectionEx::prepareDataFrame(const HttpStream::Ptr &stream) {
+    // todo prepareDataFrame
+    return false;
+}
+
+bool HttpConnectionEx::prepareDataFrame4Body(const HttpStream::Ptr &stream) {
+    // todo prepareDataFrame4Body
+    return false;
+}
+
+bool HttpConnectionEx::prepareDataFrame4SingleRange(const HttpStream::Ptr &stream) {
+    // todo prepareDataFrame4SingleRange
+    return false;
+}
+
+bool HttpConnectionEx::prepareDataFrame4Ranges(const HttpStream::Ptr &stream) {
+    // todo prepareDataFrame4Ranges
+    return false;
 }

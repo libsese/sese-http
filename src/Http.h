@@ -213,6 +213,32 @@ struct HttpConnectionEx {
 
     bool postHeadersFrame(const HttpStream::Ptr &stream, bool verify_end_stream);
 
+    /// Prepare HEADERS frame
+    /// @param stream Operating stream
+    /// @param verify_end_stream Whether to determine END_STREAM through response body
+    /// @return Whether the current stream has been fully processed
+    bool prepareHeadersFrame(const HttpStream::Ptr &stream, bool verify_end_stream = true);
+
+    /// Prepare the controller's response body into a DATA frame
+    /// @param stream Operating stream
+    /// @return Whether the current stream has been fully processed
+    bool prepareDataFrame(const HttpStream::Ptr &stream);
+
+    /// Prepare the controller's response body into a DATA frame
+    /// @param stream Operating stream
+    /// @return Whether the current stream has been fully processed
+    bool prepareDataFrame4Body(const HttpStream::Ptr &stream);
+
+    /// Prepare single-range file response into a DATA frame
+    /// @param stream Operating stream
+    /// @return Whether the current stream has been fully processed
+    bool prepareDataFrame4SingleRange(const HttpStream::Ptr &stream);
+
+    /// Prepare multi-range file response into a DATA frame
+    /// @param stream Operating stream
+    /// @return Whether the current stream has been fully processed
+    bool prepareDataFrame4Ranges(const HttpStream::Ptr &stream);
+
     sese::net::http::Http2FrameInfo info;
     HttpServiceImpl *service;
     sese::net::IPAddress::Ptr address;
@@ -220,6 +246,8 @@ struct HttpConnectionEx {
     bool expect_ack = false;
     asio::steady_timer timer;
     size_t timeout;
+    bool is_write = false;
+    bool is_read = false;
 
     uint32_t accept_stream_count = 0;
     uint32_t latest_stream_ident = 0;
@@ -332,7 +360,7 @@ struct HttpServiceImpl final : sese::service::Service {
 
     asio::awaitable<void> handleSslAccept();
 
-private:
+// private:
     asio::io_context io_context;
     asio::ip::tcp::endpoint endpoint;
     std::optional<asio::ssl::context> ssl_context;

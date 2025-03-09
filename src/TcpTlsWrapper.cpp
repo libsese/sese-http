@@ -31,11 +31,11 @@ HttpConnection::HttpConnection(
     size_t timeout)
     : service(service), timer(io_context), address(addr) {
     this->timeout = timeout;
-    SESE_INFO("new connection");
+    // SESE_INFO("new connection");
 }
 
 HttpConnection::~HttpConnection() {
-    SESE_INFO("connection close");
+    // SESE_INFO("connection close");
 }
 
 HttpConnectionImpl::HttpConnectionImpl(
