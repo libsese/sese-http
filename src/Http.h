@@ -152,6 +152,8 @@ struct HttpConnectionEx {
 
     virtual asio::awaitable<size_t> asyncRead(void *buffer, size_t size) = 0;
 
+    virtual asio::awaitable<void> asyncWrite(const std::vector<asio::const_buffer> &buffers) = 0;
+
     virtual void onTimeout() = 0;
 
     asio::awaitable<void> handle();
@@ -304,6 +306,8 @@ struct HttpConnectionExImpl final : HttpConnectionEx {
 
     asio::awaitable<size_t> asyncRead(void *buffer, size_t size) override;
 
+    asio::awaitable<void> asyncWrite(const std::vector<asio::const_buffer> &buffers) override;
+
     void onTimeout() override;
 
     Socket socket;
@@ -323,6 +327,8 @@ struct HttpsConnectionExImpl final : HttpConnectionEx {
     asio::awaitable<size_t> asyncWrite(const void *buffer, size_t size) override;
 
     asio::awaitable<size_t> asyncRead(void *buffer, size_t size) override;
+
+    asio::awaitable<void> asyncWrite(const std::vector<asio::const_buffer> &buffers) override;
 
     void onTimeout() override;
 

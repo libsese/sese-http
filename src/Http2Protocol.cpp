@@ -185,7 +185,9 @@ void HttpConnectionEx::handleRstStreamFrame() {
         return;
     }
     auto stream = iterator->second;
-    // todo close(stream->id);
+    streams.erase(stream->id);
+    closed_streams.emplace(stream->id);
+
 
     uint32_t code;
     memcpy(buffer, &code, 4);
@@ -284,7 +286,6 @@ void HttpConnectionEx::handlePriorityFrame() {
 
     if (stream_dependency == info.ident) {
         postGoawayFrame(info.ident, 0, GOAWAY_PROTOCOL_ERROR);
-        return;
     }
 }
 
@@ -491,7 +492,6 @@ void HttpConnectionEx::handleDataFrame() {\
 }
 
 void HttpConnectionEx::triggerWrite() {
-    // todo co_spawn
     if (!is_write) {
         return;
     }
@@ -563,18 +563,15 @@ void HttpConnectionEx::triggerWrite() {
         if (!pre_vector.empty()) {
             vector.clear();
             vector.swap(pre_vector);
-            // todo write
-            // checkKeepalive();
-            // writeBlocks(asio_buffers, [conn = getPtr()](const asio::error_code &ec) {
-            //     if (ec) {
-            //         conn->disponse();
-            //         return;
-            //     }
-            //     conn->handleWrite();
-            // });
-            co_await asyncRead(nullptr, 0);
+            std::vector<asio::const_buffer> buffers;
+            buffers.reserve(vector.size());
+            for (auto &&item: vector) {
+                buffers.emplace_back(asio::buffer(item->getFrameBuffer(), item->getFrameLength()));
+            }
+            co_await asyncWrite(buffers);
         }
         is_write = false;
+        triggerWrite();
     }, asio::detached);
 }
 

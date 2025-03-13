@@ -124,6 +124,10 @@ asio::awaitable<size_t> HttpConnectionExImpl::asyncWrite(const void *buffer, siz
     co_return size;
 }
 
+asio::awaitable<void> HttpConnectionExImpl::asyncWrite(const std::vector<asio::const_buffer> &buffers) {
+    co_await this->socket.async_write_some(buffers, asio::use_awaitable);
+}
+
 void HttpConnectionExImpl::onTimeout() {
     socket.cancel();
 }
@@ -149,6 +153,10 @@ asio::awaitable<size_t> HttpsConnectionExImpl::asyncWrite(const void *buffer, si
         block_size -= wrote;
     }
     co_return size;
+}
+
+asio::awaitable<void> HttpsConnectionExImpl::asyncWrite(const std::vector<asio::const_buffer> &buffers) {
+    co_await this->stream.async_write_some(buffers, asio::use_awaitable);
 }
 
 void HttpsConnectionExImpl::onTimeout() {
