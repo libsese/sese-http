@@ -223,11 +223,6 @@ struct HttpConnectionEx {
     /// Prepare the controller's response body into a DATA frame
     /// @param stream Operating stream
     /// @return Whether the current stream has been fully processed
-    bool prepareDataFrame(const HttpStream::Ptr &stream);
-
-    /// Prepare the controller's response body into a DATA frame
-    /// @param stream Operating stream
-    /// @return Whether the current stream has been fully processed
     bool prepareDataFrame4Body(const HttpStream::Ptr &stream);
 
     /// Prepare single-range file response into a DATA frame

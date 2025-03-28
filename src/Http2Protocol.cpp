@@ -8,7 +8,7 @@ asio::awaitable<void> HttpConnectionEx::handle() {
     if (!co_await readMagic()) {
         co_return;
     }
-    // todo postSettingsFrame
+    postSettingsFrame();
     while (true) {
         if (!co_await readFrameHeader()) {
             co_return;
@@ -26,30 +26,48 @@ asio::awaitable<void> HttpConnectionEx::handle() {
         }
         switch (info.type) {
             case FRAME_TYPE_SETTINGS: {
+                auto code = co_await handleSettingsFrame();
+                if (code == UINT8_MAX) {
+                    // Recv ACK
+                    co_await readFrameHeader();
+                } else if (code == 0) {
+                    // All be OK
+                    postAckFrame();
+                }
                 break;
             }
             case FRAME_TYPE_WINDOW_UPDATE: {
+                co_await handleWindowUpdate();
                 break;
             }
             case FRAME_TYPE_GOAWAY: {
+                handleGoawayFrame();
                 break;
             }
+            // todo
+            // For the server, only CONTINUATION after HEADERS needs to be processed
+            // Determine the previous frame 1
             case FRAME_TYPE_CONTINUATION: {
                 break;
             }
             case FRAME_TYPE_HEADERS: {
+                handleHeadersFrame();
                 break;
             }
             case FRAME_TYPE_DATA: {
+                handleDataFrame();
                 break;
             }
             case FRAME_TYPE_PRIORITY: {
+                handlePriorityFrame();
                 break;
             }
             case FRAME_TYPE_RST_STREAM: {
+                handleRstStreamFrame();
                 break;
             }
             case FRAME_TYPE_PING: {
+                handlePingFrame();
                 break;
             }
             default: {
@@ -214,7 +232,7 @@ void HttpConnectionEx::handleGoawayFrame() {
         auto msg = std::string_view(buffer + 8, info.length - 8);
         // SESE_WARN("FAILED: LS {} CODE {} MSG {}", latest_stream, error_code, msg);
         if (msg == "shutdown") {
-            return;
+            return; // NOLINT pass
         }
     } else {
         // SESE_WARN("FAILED: LS {} CODE {}", latest_stream, error_code);
@@ -746,18 +764,44 @@ bool HttpConnectionEx::postHeadersFrame(const HttpStream::Ptr &stream, bool veri
 }
 
 bool HttpConnectionEx::prepareHeadersFrame(const HttpStream::Ptr &stream, bool verify_end_stream) {
-    // todo prepareHeadersFrame
-    return false;
-}
-
-bool HttpConnectionEx::prepareDataFrame(const HttpStream::Ptr &stream) {
-    // todo prepareDataFrame
-    return false;
+    auto result = false;
+    auto frame = std::make_unique<sese::net::http::Http2Frame>(max_frame_size);
+    frame->ident = stream->id;
+    auto len = stream->builder.read(frame->getFrameContentBuffer(), max_frame_size);
+    frame->type = sese::net::http::FRAME_TYPE_HEADERS;
+    frame->length = static_cast<uint32_t>(len);
+    if (stream->builder.eof()) {
+        frame->flags |= sese::net::http::FRAME_FLAG_END_HEADERS;
+    }
+    if (verify_end_stream && stream->response.getBody().eof()) {
+        frame->flags |= sese::net::http::FRAME_FLAG_END_STREAM;
+        result = true;
+    }
+    frame->buildFrameHeader();
+    pre_vector.push_back(std::move(frame));
+    return result;
 }
 
 bool HttpConnectionEx::prepareDataFrame4Body(const HttpStream::Ptr &stream) {
-    // todo prepareDataFrame4Body
-    return false;
+    // The window size is insufficient
+    if (endpoint_window_size == 0 ||
+        stream->endpoint_window_size == 0) {
+        return false;
+        }
+    auto result = false;
+    auto frame = std::make_unique<sese::net::http::Http2Frame>(max_frame_size);
+    frame->ident = stream->id;
+    auto remind = std::min({endpoint_window_size, stream->endpoint_window_size, max_frame_size});
+    auto len = stream->response.getBody().read(frame->getFrameContentBuffer(), remind);
+    frame->type = sese::net::http::FRAME_TYPE_DATA;
+    frame->length = static_cast<uint32_t>(len);
+    if (stream->response.getBody().eof()) {
+        frame->flags |= sese::net::http::FRAME_FLAG_END_STREAM;
+        result = true;
+    }
+    frame->buildFrameHeader();
+    pre_vector.push_back(std::move(frame));
+    return result;
 }
 
 bool HttpConnectionEx::prepareDataFrame4SingleRange(const HttpStream::Ptr &stream) {
