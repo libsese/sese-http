@@ -210,7 +210,7 @@ asio::awaitable<void> HttpServiceImpl::handleAccept() {
             if (connection_callback && !connection_callback(remote_address)) {
                 co_return;
             }
-            HttpConnectionImpl connection(this, io_context, remote_address, timeout, std::move(socket));
+            HttpConnectionExImpl connection(this, io_context, remote_address, timeout, std::move(socket));
             co_await connection.handle();
         }, asio::detached);
     }
@@ -244,7 +244,7 @@ asio::awaitable<void> HttpServiceImpl::handleSslAccept() {
                 }
                 HttpsConnectionExImpl connection(this, io_context, remote_address, timeout, std::move(stream));
                 co_await connection.handle();
-            });
+            }, asio::detached);
         } else {
             // No protocol, switch to http/1.1
             co_spawn(io_context, [this, &stream]()-> asio::awaitable<void> {

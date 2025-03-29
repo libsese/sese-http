@@ -510,7 +510,7 @@ void HttpConnectionEx::handleDataFrame() {\
 }
 
 void HttpConnectionEx::triggerWrite() {
-    if (!is_write) {
+    if (is_write) {
         return;
     }
     timer.cancel();
@@ -588,8 +588,8 @@ void HttpConnectionEx::triggerWrite() {
             }
             co_await asyncWrite(buffers);
         }
-        is_write = false;
-        triggerWrite();
+        // is_write = false;
+        // triggerWrite();
     }, asio::detached);
 }
 
@@ -714,8 +714,8 @@ void HttpConnectionEx::postSettingsFrame() {
         pos += sizeof(value);
     }
     expect_ack = true;
-    triggerWrite();
     pre_vector.push_back(std::move(frame));
+    triggerWrite();
 }
 
 void HttpConnectionEx::postAckFrame() {
@@ -723,8 +723,8 @@ void HttpConnectionEx::postAckFrame() {
     frame->type = sese::net::http::FRAME_TYPE_SETTINGS;
     frame->flags = sese::net::http::SETTINGS_FLAGS_ACK;
     frame->buildFrameHeader();
-    triggerWrite();
     pre_vector.push_back(std::move(frame));
+    triggerWrite();
 }
 
 void HttpConnectionEx::postWindowUpdateFrame(
@@ -787,7 +787,7 @@ bool HttpConnectionEx::prepareDataFrame4Body(const HttpStream::Ptr &stream) {
     if (endpoint_window_size == 0 ||
         stream->endpoint_window_size == 0) {
         return false;
-        }
+    }
     auto result = false;
     auto frame = std::make_unique<sese::net::http::Http2Frame>(max_frame_size);
     frame->ident = stream->id;
